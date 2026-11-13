@@ -64,3 +64,7 @@ ever seeing your data:
   pulls, merges per item using each item's `id` / `updatedAt` (deletions are kept as
   `tombstones`) and pushes again.
 - Settings → Sync will hold the server URL and account.
+
+## License
+
+MIT, see [LICENSE](LICENSE).
