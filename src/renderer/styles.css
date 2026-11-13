@@ -342,6 +342,10 @@ select:focus {
   display: none;
   overflow: hidden;
 }
+.terminal-host {
+  height: 100%;
+  overflow: hidden;
+}
 .terminal-pane.active {
   display: block;
 }

@@ -215,7 +215,10 @@ export function TerminalPane(props: Props) {
 
   return (
     <>
-      <div className={`terminal-pane ${active ? 'active' : ''}`} ref={hostRef} />
+      {/* Padding lives on the outer pane: FitAddon measures the host's full height, so the host must have none. */}
+      <div className={`terminal-pane ${active ? 'active' : ''}`}>
+        <div className="terminal-host" ref={hostRef} />
+      </div>
       {menu && active && (
         <ContextMenu
           x={menu.x}
