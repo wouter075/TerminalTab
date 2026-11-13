@@ -23,6 +23,12 @@ const api: TerminalTabApi = {
   deleteKey: (id) => ipcRenderer.invoke('key:delete', id),
   saveSettings: (s) => ipcRenderer.invoke('settings:save', s),
 
+  syncStatus: () => ipcRenderer.invoke('sync:status'),
+  syncConnect: (repo, token) => ipcRenderer.invoke('sync:connect', repo, token),
+  syncDisconnect: () => ipcRenderer.invoke('sync:disconnect'),
+  syncNow: (pw) => ipcRenderer.invoke('sync:now', pw),
+  syncRestore: (repo, token, pw) => ipcRenderer.invoke('sync:restore', repo, token, pw),
+
   openSession: (id, cols, rows) => ipcRenderer.invoke('session:open', id, cols, rows),
   write: (sid, data) => ipcRenderer.send('session:write', sid, data),
   resize: (sid, cols, rows) => ipcRenderer.send('session:resize', sid, cols, rows),
@@ -35,6 +41,8 @@ const api: TerminalTabApi = {
   onSessionInfo: (cb) => listen('session:info', cb),
   onHostKeyPrompt: (cb) => listen('hostkey:prompt', cb),
   onLocked: (cb) => listen('vault:locked', cb),
+  onSyncStatus: (cb) => listen('sync:status', cb),
+  onDataChanged: (cb) => listen('data:changed', cb),
 };
 
 contextBridge.exposeInMainWorld('terminalTab', api);

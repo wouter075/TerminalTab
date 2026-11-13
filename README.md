@@ -45,6 +45,7 @@ password means the vault cannot be decrypted. Delete the file to start over.
 | `src/main/vault.ts` | Encrypted vault (file format, unlock, save) |
 | `src/main/sessions.ts` | SSH connections (one ssh2 client per tab), latency + traffic counters |
 | `src/main/serverStats.ts` | Read-only stats script and its parser |
+| `src/main/sync.ts`, `merge.ts`, `github.ts` | GitHub sync: pull / merge / push of the encrypted vault |
 | `src/main/ipc.ts` | IPC handlers, key import, host-key prompts, auto-lock |
 | `src/preload.ts` | `window.terminalTab` bridge (the renderer has no Node access) |
 | `src/shared/` | Types shared by main and renderer |
@@ -53,17 +54,32 @@ password means the vault cannot be decrypted. Delete the file to start over.
 Private keys and passwords stay in the main process. The renderer only gets
 names and flags.
 
-## Planned: sync server
+## Sync between PCs (GitHub)
 
-The vault is designed to sync with a small self-hosted server without the server
-ever seeing your data:
+TerminalTab can sync your servers, keys and trusted host keys through a **private**
+GitHub repository. Only the encrypted vault file (`terminaltab-vault.json`) is
+uploaded; GitHub never sees your data or your master password.
 
-- The server stores only the encrypted vault blob (`salt`, `iv`, `authTag`,
-  `ciphertext`) plus a revision number.
-- `PUT /vault` with `If-Match: <revision>` returns 409 on conflict. The client then
-  pulls, merges per item using each item's `id` / `updatedAt` (deletions are kept as
-  `tombstones`) and pushes again.
-- Settings → Sync will hold the server URL and account.
+**First PC:** Settings → Sync with GitHub
+1. Create a private repository, e.g. `terminaltab-vault`.
+2. Create a [fine-grained token](https://github.com/settings/personal-access-tokens/new):
+   *Only select repositories* → that repo, permission *Contents: Read and write*.
+3. Enter the repo and token. The token is stored inside your encrypted vault.
+
+**Other PCs:** on the first screen choose *Restore from GitHub* and enter the repo,
+a token and your master password.
+
+How it works:
+- Syncs after unlocking, after every change, and every 5 minutes.
+- Changes are merged per server/key (newest edit wins, deletions are kept), so
+  edits on two PCs don't overwrite each other. Simultaneous saves are detected
+  with GitHub's file version and retried.
+- Every sync is a commit, so older versions can be restored from the repo history.
+- If you change the master password on one PC, the others ask for the new one at
+  their next sync and switch to it.
+- Public repositories and read-only tokens are refused.
+- Because the encrypted vault is online, use a long master password (the app
+  warns if it is short).
 
 ## License
 

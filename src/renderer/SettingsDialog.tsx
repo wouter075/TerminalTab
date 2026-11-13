@@ -1,15 +1,18 @@
 import { useState } from 'react';
-import type { Settings } from '../shared/types';
+import type { Settings, SyncStatus } from '../shared/types';
 import { Modal } from './Modal';
+import { SyncSection } from './SyncSection';
 import { api, errMsg } from './util';
 
 interface Props {
   settings: Settings;
+  syncRepo?: string;
+  syncStatus: SyncStatus;
   onClose(): void;
   onChanged(): void;
 }
 
-export function SettingsDialog({ settings, onClose, onChanged }: Props) {
+export function SettingsDialog({ settings, syncRepo, syncStatus, onClose, onChanged }: Props) {
   const [autoLock, setAutoLock] = useState(String(settings.autoLockMinutes));
   const [fontSize, setFontSize] = useState(String(settings.fontSize));
   const [serverStats, setServerStats] = useState(settings.serverStats);
@@ -40,6 +43,7 @@ export function SettingsDialog({ settings, onClose, onChanged }: Props) {
 
   return (
     <Modal
+      width={540}
       title="Settings"
       onClose={onClose}
       footer={
@@ -87,8 +91,8 @@ export function SettingsDialog({ settings, onClose, onChanged }: Props) {
           {msg && <span className={msg.ok ? 'ok' : 'error'}>{msg.text}</span>}
         </div>
 
-        <h3>Sync</h3>
-        <p className="muted">Syncing servers between devices via your own TerminalTab server is coming in a later version.</p>
+        <h3>Sync with GitHub</h3>
+        <SyncSection repo={syncRepo} status={syncStatus} onChanged={onChanged} />
       </div>
     </Modal>
   );

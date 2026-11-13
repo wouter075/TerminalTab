@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { AppData } from '../shared/api';
-import type { ConnectionInfo, HostKeyPrompt, SessionInfo, SessionStatus, VaultState } from '../shared/types';
+import type { ConnectionInfo, HostKeyPrompt, SessionInfo, SessionStatus, SyncStatus, VaultState } from '../shared/types';
 import { DEFAULT_SETTINGS } from '../shared/types';
 import { ConnectionDialog } from './ConnectionDialog';
 import { KeysDialog } from './KeysDialog';
@@ -37,12 +37,16 @@ export function App() {
   const [activeId, setActiveId] = useState<string | null>(null);
   const [dialog, setDialog] = useState<Dialog>(null);
   const [hostPrompts, setHostPrompts] = useState<HostKeyPrompt[]>([]);
+  const [syncStatus, setSyncStatus] = useState<SyncStatus>({ state: 'off' });
   const searchRef = useRef<HTMLInputElement>(null);
 
   const refresh = useCallback(async () => {
     const state = await api.vaultState();
     setVaultState(state);
-    if (state === 'unlocked') setData(await api.getData());
+    if (state === 'unlocked') {
+      setData(await api.getData());
+      setSyncStatus(await api.syncStatus());
+    }
   }, []);
 
   useEffect(() => {
@@ -53,9 +57,16 @@ export function App() {
       (document.activeElement as HTMLElement | null)?.blur();
     });
     const offHost = api.onHostKeyPrompt((p) => setHostPrompts((ps) => [...ps, p]));
+    const offSync = api.onSyncStatus(setSyncStatus);
+    // Servers/keys changed by a sync from another PC.
+    const offData = api.onDataChanged(() => {
+      api.getData().then(setData, () => undefined);
+    });
     return () => {
       offLock();
       offHost();
+      offSync();
+      offData();
     };
   }, [refresh]);
 
@@ -143,6 +154,7 @@ export function App() {
             onKeys={() => setDialog({ kind: 'keys' })}
             onSettings={() => setDialog({ kind: 'settings' })}
             onLock={() => api.lock()}
+            syncStatus={syncStatus}
           />
           <main className="main">
             <div className="tabbar">
@@ -248,7 +260,13 @@ export function App() {
         <KeysDialog keys={data.keys} connections={data.connections} onClose={() => setDialog(null)} onChanged={refresh} />
       )}
       {vaultState === 'unlocked' && dialog?.kind === 'settings' && (
-        <SettingsDialog settings={data.settings} onClose={() => setDialog(null)} onChanged={refresh} />
+        <SettingsDialog
+          settings={data.settings}
+          syncRepo={data.sync?.repo}
+          syncStatus={syncStatus}
+          onClose={() => setDialog(null)}
+          onChanged={refresh}
+        />
       )}
 
       {prompt && vaultState === 'unlocked' && (

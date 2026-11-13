@@ -28,6 +28,27 @@ export class WrongPasswordError extends Error {
   }
 }
 
+/** A blob was encrypted with a different master password (changed on another device). */
+export class PasswordChangedError extends Error {
+  constructor() {
+    super('The master password was changed on another device');
+  }
+}
+
+/** Rough check: long passphrases or mixed character classes. Kept in memory only. */
+export function isWeakPassword(pw: string): boolean {
+  const classes = [/[a-z]/, /[A-Z]/, /[0-9]/, /[^a-zA-Z0-9]/].filter((r) => r.test(pw)).length;
+  return !(pw.length >= 16 || (pw.length >= 12 && classes >= 3));
+}
+
+interface KeyMaterial {
+  key: Buffer;
+  salt: Buffer;
+  kdfParams: KdfParams;
+}
+
+const sameKdf = (a: KdfParams, b: KdfParams) => a.N === b.N && a.r === b.r && a.p === b.p;
+
 function deriveKey(password: string, salt: Buffer, params: KdfParams): Promise<Buffer> {
   return new Promise((resolve, reject) => {
     scrypt(
@@ -94,6 +115,11 @@ export class Vault {
   private key: Buffer | null = null;
   private salt: Buffer | null = null;
   private kdfParams: KdfParams = DEFAULT_KDF;
+  /** Keys replaced during this session (password change), so older remote copies can still be read. */
+  private retired: KeyMaterial[] = [];
+  /** Called after every non-silent update (used to trigger sync). */
+  onChange: (() => void) | null = null;
+  passwordWeak = false;
 
   constructor(
     private readonly filePath: string,
@@ -125,6 +151,22 @@ export class Vault {
     this.kdfParams = this.newKdfParams;
     this.key = await deriveKey(password, this.salt, this.kdfParams);
     this.data = emptyVault();
+    this.passwordWeak = isWeakPassword(password);
+    await this.save();
+  }
+
+  /** Create the local vault from a downloaded blob (restore on a new device). */
+  async restore(blob: EncryptedVault, password: string, patch?: (d: VaultData) => void): Promise<void> {
+    if (await this.exists()) throw new Error('A vault already exists on this device');
+    const salt = Buffer.from(blob.salt, 'base64');
+    const key = await deriveKey(password, salt, blob.kdfParams);
+    const data = decryptWithKey(blob, key);
+    patch?.(data);
+    this.data = data;
+    this.key = key;
+    this.salt = salt;
+    this.kdfParams = blob.kdfParams;
+    this.passwordWeak = isWeakPassword(password);
     await this.save();
   }
 
@@ -136,6 +178,7 @@ export class Vault {
     this.key = key;
     this.salt = salt;
     this.kdfParams = blob.kdfParams;
+    this.passwordWeak = isWeakPassword(password);
   }
 
   async verifyPassword(password: string): Promise<boolean> {
@@ -147,25 +190,72 @@ export class Vault {
   async changePassword(oldPassword: string, newPassword: string): Promise<void> {
     if (!(await this.verifyPassword(oldPassword))) throw new WrongPasswordError();
     if (newPassword.length < 8) throw new Error('Master password must be at least 8 characters');
+    if (this.key && this.salt) this.retired.push({ key: this.key, salt: this.salt, kdfParams: this.kdfParams });
     this.salt = randomBytes(16);
     this.kdfParams = this.newKdfParams;
     this.key = await deriveKey(newPassword, this.salt, this.kdfParams);
+    this.passwordWeak = isWeakPassword(newPassword);
     await this.save();
+    this.onChange?.();
+  }
+
+  /** Encrypted copy of the current data (for uploading). */
+  exportBlob(): EncryptedVault {
+    if (!this.data || !this.key || !this.salt) throw new Error('Vault is locked');
+    return encryptWithKey(this.data, this.key, this.salt, this.kdfParams);
+  }
+
+  /** True if the blob was encrypted with the current master password. */
+  usesCurrentKey(blob: EncryptedVault): boolean {
+    return !!this.salt && blob.salt === this.salt.toString('base64') && sameKdf(blob.kdfParams, this.kdfParams);
+  }
+
+  /** Decrypt a blob with the current (or a retired) key; throws PasswordChangedError if neither fits. */
+  decryptBlob(blob: EncryptedVault): VaultData {
+    const candidates = [
+      ...(this.key && this.salt ? [{ key: this.key, salt: this.salt, kdfParams: this.kdfParams }] : []),
+      ...this.retired,
+    ];
+    for (const c of candidates) {
+      if (blob.salt === c.salt.toString('base64') && sameKdf(blob.kdfParams, c.kdfParams)) {
+        return decryptWithKey(blob, c.key);
+      }
+    }
+    throw new PasswordChangedError();
+  }
+
+  /**
+   * Switch to the master password of a blob from another device: verifies `password` against it,
+   * adopts its key, and returns its data. The caller saves afterwards.
+   */
+  async adoptKeyOf(blob: EncryptedVault, password: string): Promise<VaultData> {
+    const salt = Buffer.from(blob.salt, 'base64');
+    const key = await deriveKey(password, salt, blob.kdfParams);
+    const data = decryptWithKey(blob, key);
+    if (this.key && this.salt) this.retired.push({ key: this.key, salt: this.salt, kdfParams: this.kdfParams });
+    this.key = key;
+    this.salt = salt;
+    this.kdfParams = blob.kdfParams;
+    this.passwordWeak = isWeakPassword(password);
+    return data;
   }
 
   lock(): void {
     this.key?.fill(0);
+    for (const r of this.retired) r.key.fill(0);
+    this.retired = [];
     this.data = null;
     this.key = null;
     this.salt = null;
   }
 
-  /** Apply a mutation and persist atomically. */
-  async update(mutate: (data: VaultData) => void): Promise<void> {
+  /** Apply a mutation and persist atomically. `silent` skips onChange (used by sync itself). */
+  async update(mutate: (data: VaultData) => void, opts: { silent?: boolean } = {}): Promise<void> {
     const data = this.get();
     mutate(data);
     data.updatedAt = Date.now();
     await this.save();
+    if (!opts.silent) this.onChange?.();
   }
 
   private async save(): Promise<void> {

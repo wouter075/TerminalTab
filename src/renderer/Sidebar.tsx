@@ -1,6 +1,7 @@
-import { forwardRef, useMemo, useState } from 'react';
-import type { ConnectionInfo } from '../shared/types';
+import { forwardRef, useEffect, useMemo, useState } from 'react';
+import type { ConnectionInfo, SyncStatus } from '../shared/types';
 import { Logo } from './Logo';
+import { ago } from './SyncSection';
 
 interface Props {
   connections: ConnectionInfo[];
@@ -11,13 +12,20 @@ interface Props {
   onKeys(): void;
   onSettings(): void;
   onLock(): void;
+  syncStatus: SyncStatus;
 }
 
 export const Sidebar = forwardRef<HTMLInputElement, Props>(function Sidebar(
-  { connections, openCounts, onConnect, onEdit, onAdd, onKeys, onSettings, onLock },
+  { connections, openCounts, onConnect, onEdit, onAdd, onKeys, onSettings, onLock, syncStatus },
   searchRef,
 ) {
   const [query, setQuery] = useState('');
+  // Keep "Synced 3 min ago" fresh.
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    const t = setInterval(() => setTick((n) => n + 1), 30_000);
+    return () => clearInterval(t);
+  }, []);
 
   const groups = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -107,6 +115,22 @@ export const Sidebar = forwardRef<HTMLInputElement, Props>(function Sidebar(
         )}
         {connections.length > 0 && groups.length === 0 && <div className="empty-hint">No matches.</div>}
       </div>
+      {syncStatus.state !== 'off' && (
+        <button
+          className={`sync-line ${syncStatus.state}`}
+          onClick={onSettings}
+          title={syncStatus.message ?? `Syncing with github.com/${syncStatus.repo}`}
+        >
+          <span className={`sync-dot ${syncStatus.state}`} />
+          {syncStatus.state === 'syncing'
+            ? 'Syncing…'
+            : syncStatus.state === 'ok'
+              ? `Synced ${ago(syncStatus.lastSyncAt)}`
+              : syncStatus.state === 'needs-password'
+                ? 'Sync needs your password'
+                : 'Sync failed — click for details'}
+        </button>
+      )}
       <div className="sidebar-footer">
         <button onClick={onKeys}>🔑 Keys</button>
         <button onClick={onSettings}>⚙ Settings</button>

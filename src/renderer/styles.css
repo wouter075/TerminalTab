@@ -656,3 +656,72 @@ select:focus {
   margin: 3px 0 0;
   accent-color: var(--accent);
 }
+
+/* ---- sync ---------------------------------------------------------- */
+.sync-dot {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  margin-right: 7px;
+  background: var(--muted);
+  vertical-align: middle;
+}
+.sync-dot.ok {
+  background: var(--ok);
+}
+.sync-dot.syncing {
+  background: #e5c07b;
+  animation: pulse 1s infinite alternate;
+}
+.sync-dot.error {
+  background: var(--danger);
+}
+.sync-dot.needs-password {
+  background: #e5c07b;
+}
+.sync-line {
+  margin: 0 12px;
+  padding: 5px 8px;
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  font-size: 11.5px;
+  text-align: left;
+}
+.sync-line.error,
+.sync-line.needs-password {
+  color: #e5c07b;
+}
+.sync-card {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px 12px;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+.help-steps {
+  margin: 0;
+  padding-left: 18px;
+  line-height: 1.6;
+}
+a {
+  color: #82c4ff;
+}
+.warn {
+  color: #e5c07b;
+  margin: 0;
+  line-height: 1.5;
+}
+.unlock-card .link-btn {
+  background: transparent;
+  border: none;
+  color: #82c4ff;
+  padding: 2px;
+  font-size: 12px;
+}
+.unlock-card .form label {
+  color: var(--muted);
+}

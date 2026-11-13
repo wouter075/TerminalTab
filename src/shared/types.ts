@@ -36,11 +36,32 @@ export interface Settings {
   serverStats: boolean;
 }
 
+/** GitHub sync configuration. Device-local: never merged from the remote copy. */
+export interface SyncConfig {
+  /** "owner/name" of a private repository */
+  repo: string;
+  token: string;
+  lastSyncAt?: number;
+}
+
+export type SyncState = 'off' | 'syncing' | 'ok' | 'error' | 'needs-password';
+
+export interface SyncStatus {
+  state: SyncState;
+  repo?: string;
+  message?: string;
+  lastSyncAt?: number;
+  /** The master password is short/simple; matters more once the vault is stored online. */
+  weakPassword?: boolean;
+}
+
 export interface VaultData {
   connections: Connection[];
   keys: KeyEntry[];
   knownHosts: KnownHost[];
+  /** Device-local, like `sync`. */
   settings: Settings;
+  sync?: SyncConfig;
   /** Ids of deleted items, kept so sync can propagate deletions. */
   tombstones: VaultItem[];
   updatedAt: number;

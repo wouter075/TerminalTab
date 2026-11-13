@@ -1,21 +1,36 @@
 import { randomUUID } from 'node:crypto';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
-import { BrowserWindow, dialog, ipcMain, powerMonitor } from 'electron';
+import { BrowserWindow, dialog, ipcMain, net, powerMonitor } from 'electron';
 import { utils } from 'ssh2';
 import type { AppData, ConnectionSave, PickedKeyFile } from '../shared/api';
 import type { ConnectionInfo, KeyEntry, KeyInfo, Settings, VaultData, VaultState } from '../shared/types';
+import { GitHubClient, normalizeRepo, type FetchFn } from './github';
 import { keyFingerprint, SessionManager } from './sessions';
-import { Vault } from './vault';
+import { SyncManager } from './sync';
+import { Vault, WrongPasswordError } from './vault';
 
 export function registerIpc(vaultFile: string, getWindow: () => BrowserWindow | null): { shutdown(): void } {
   const vault = new Vault(vaultFile);
   const send = (channel: string, ...args: unknown[]) => getWindow()?.webContents.send(channel, ...args);
 
+  // ---- GitHub sync -----------------------------------------------------
+  // Electron's net.fetch uses the system proxy settings (school / company networks).
+  const fetchFn: FetchFn = (url, init) => net.fetch(url, init);
+  const github = (token: string) => new GitHubClient(token, fetchFn);
+  const sync = new SyncManager({
+    vault,
+    makeStore: (cfg) => github(cfg.token).store(cfg.repo),
+    onStatus: (s) => send('sync:status', s),
+    onDataChanged: () => send('data:changed'),
+  });
+  vault.onChange = () => sync.schedule();
+
   // ---- auto-lock -------------------------------------------------------
   let lockTimer: NodeJS.Timeout | null = null;
   const doLock = () => {
     if (!vault.isUnlocked) return;
+    sync.stop();
     vault.lock();
     pendingKeys.clear();
     send('vault:locked');
@@ -49,6 +64,7 @@ export function registerIpc(vaultFile: string, getWindow: () => BrowserWindow | 
       });
       if (trust && vault.isUnlocked) {
         await vault.update((d) => {
+          for (const old of d.knownHosts.filter((h) => h.hostPort === hostPort)) tombstone(d, old.id);
           d.knownHosts = d.knownHosts.filter((h) => h.hostPort !== hostPort);
           d.knownHosts.push({ id: randomUUID(), updatedAt: Date.now(), hostPort, fingerprint });
         });
@@ -76,6 +92,7 @@ export function registerIpc(vaultFile: string, getWindow: () => BrowserWindow | 
     connections: d.connections.map(({ password, ...c }): ConnectionInfo => ({ ...c, hasPassword: !!password })),
     keys: d.keys.map(keyInfo),
     settings: d.settings,
+    sync: d.sync ? { repo: d.sync.repo } : undefined,
   });
 
   const tombstone = (d: VaultData, id: string) => d.tombstones.push({ id, updatedAt: Date.now() });
@@ -95,7 +112,10 @@ export function registerIpc(vaultFile: string, getWindow: () => BrowserWindow | 
     return (await vault.exists()) ? 'locked' : 'missing';
   }, false);
   handle('vault:create', (pw: string) => vault.create(pw), false);
-  handle('vault:unlock', (pw: string) => vault.unlock(pw), false);
+  handle('vault:unlock', async (pw: string) => {
+    await vault.unlock(pw);
+    sync.start();
+  }, false);
   handle('vault:lock', () => doLock(), false);
   handle('vault:changePassword', (o: string, n: string) => vault.changePassword(o, n));
 
@@ -213,6 +233,42 @@ export function registerIpc(vaultFile: string, getWindow: () => BrowserWindow | 
     }),
   );
 
+  // ---- sync ------------------------------------------------------------
+  handle('sync:status', () => sync.getStatus());
+
+  handle('sync:connect', async (repoInput: string, tokenInput?: string) => {
+    const repo = normalizeRepo(repoInput);
+    const token = tokenInput?.trim() || vault.get().sync?.token;
+    if (!token) throw new Error('Enter a GitHub token');
+    await github(token).checkRepo(repo);
+    await vault.update((d) => (d.sync = { repo, token }), { silent: true });
+    sync.start();
+    return sync.syncNow();
+  });
+
+  handle('sync:disconnect', async () => {
+    sync.stop();
+    await vault.update((d) => (d.sync = undefined), { silent: true });
+    send('sync:status', sync.getStatus());
+  });
+
+  handle('sync:now', (password?: string) => sync.syncNow(password || undefined));
+
+  handle('sync:restore', async (repoInput: string, token: string, password: string) => {
+    const repo = normalizeRepo(repoInput);
+    const client = github(token.trim());
+    await client.checkRepo(repo);
+    const remote = await client.store(repo).get();
+    if (!remote) throw new Error(`No TerminalTab vault in ${repo} yet. Turn on sync on your other PC first.`);
+    try {
+      await vault.restore(remote.blob, password, (d) => (d.sync = { repo, token: token.trim(), lastSyncAt: Date.now() }));
+    } catch (err) {
+      if (err instanceof WrongPasswordError) throw new Error('Wrong master password for the vault on GitHub');
+      throw err;
+    }
+    sync.start();
+  }, false);
+
   // ---- sessions --------------------------------------------------------
   handle('session:open', (connectionId: string, cols: number, rows: number) => {
     const d = vault.get();
@@ -237,6 +293,7 @@ export function registerIpc(vaultFile: string, getWindow: () => BrowserWindow | 
 
   return {
     shutdown() {
+      sync.stop();
       sessions.closeAll();
       vault.lock();
     },

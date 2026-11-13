@@ -6,6 +6,7 @@ import type {
   SessionInfo,
   SessionStatus,
   Settings,
+  SyncStatus,
   VaultState,
 } from './types';
 
@@ -13,6 +14,8 @@ export interface AppData {
   connections: ConnectionInfo[];
   keys: KeyInfo[];
   settings: Settings;
+  /** Present when GitHub sync is set up (the token is never sent to the renderer). */
+  sync?: { repo: string };
 }
 
 export interface PickedKeyFile {
@@ -44,6 +47,15 @@ export interface TerminalTabApi {
   deleteKey(id: string): Promise<void>;
   saveSettings(settings: Settings): Promise<void>;
 
+  syncStatus(): Promise<SyncStatus>;
+  /** Check the repo + token, save them and sync. Omit the token to keep the saved one. */
+  syncConnect(repo: string, token?: string): Promise<SyncStatus>;
+  syncDisconnect(): Promise<void>;
+  /** `password` answers the 'needs-password' state. */
+  syncNow(password?: string): Promise<SyncStatus>;
+  /** New device: download the vault from GitHub and unlock it. */
+  syncRestore(repo: string, token: string, password: string): Promise<void>;
+
   openSession(connectionId: string, cols: number, rows: number): Promise<string>;
   write(sessionId: string, data: string): void;
   resize(sessionId: string, cols: number, rows: number): void;
@@ -57,6 +69,8 @@ export interface TerminalTabApi {
   onSessionInfo(cb: (sessionId: string, info: SessionInfo) => void): () => void;
   onHostKeyPrompt(cb: (prompt: HostKeyPrompt) => void): () => void;
   onLocked(cb: () => void): () => void;
+  onSyncStatus(cb: (status: SyncStatus) => void): () => void;
+  onDataChanged(cb: () => void): () => void;
 }
 
 declare global {
