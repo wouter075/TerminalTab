@@ -1,3 +1,4 @@
+import path from 'node:path';
 import type { ForgeConfig } from '@electron-forge/shared-types';
 import { MakerSquirrel } from '@electron-forge/maker-squirrel';
 import { MakerZIP } from '@electron-forge/maker-zip';
@@ -44,7 +45,18 @@ const config: ForgeConfig = {
         scripts: { postinst: 'packaging/linux/postinst' },
       },
     }),
-    new MakerRpm({ options: { ...linuxOptions, license: 'MIT' } }),
+    new MakerRpm({
+      options: {
+        ...linuxOptions,
+        license: 'MIT',
+        // electron-installer-redhat options missing from Forge's types. The own spec template
+        // works with rpmbuild >= 4.20.
+        ...({
+          specTemplate: path.resolve('packaging/linux/rpm.spec.ejs'),
+          scripts: { post: 'packaging/linux/postinst' },
+        } as object),
+      },
+    }),
   ],
   plugins: [
     new VitePlugin({

@@ -2,16 +2,66 @@
 
 # TerminalTab
 
-A Windows app for keeping many SSH sessions open side by side as tabs, with your
-servers and `.pem` keys saved in an encrypted vault.
+A Windows and Linux app for keeping many SSH sessions open side by side as tabs,
+with your servers and `.pem` keys saved in an encrypted vault.
 
 ## Download
 
-Get `TerminalTab-Setup.exe` from the
-[latest release](https://github.com/wouter075/TerminalTab/releases/latest) and run it.
-It installs per user (no admin needed) and adds a Start menu shortcut. The installer
-is not code-signed, so Windows SmartScreen may warn the first time: choose
-*More info* → *Run anyway*. A portable `.zip` is attached as well.
+All installers are on the
+[latest release](https://github.com/wouter075/TerminalTab/releases/latest) page.
+
+### Windows
+
+Download `TerminalTab-Setup.exe` and run it. It installs per user (no admin needed)
+and adds a Start menu shortcut. The installer is not code-signed, so Windows
+SmartScreen may warn the first time: choose *More info* → *Run anyway*. A portable
+`.zip` is attached as well.
+
+### Linux
+
+64-bit (x86_64) packages for desktop Linux:
+
+| Distribution | File |
+| --- | --- |
+| Ubuntu, Debian, Linux Mint, Pop!_OS, … | `terminaltab_<version>_amd64.deb` |
+| Fedora, RHEL, Rocky / AlmaLinux, openSUSE, … | `terminaltab-<version>-1.x86_64.rpm` |
+
+**Ubuntu / Debian.** Download the `.deb`, then in a terminal:
+
+```sh
+cd ~/Downloads
+sudo apt install ./terminaltab_*_amd64.deb
+```
+
+Use `apt` (not `dpkg -i`) so the libraries it needs are installed too. To update,
+install the newer `.deb` the same way.
+
+**Fedora / RHEL.** Download the `.rpm`, then:
+
+```sh
+cd ~/Downloads
+sudo dnf install ./terminaltab-*.x86_64.rpm
+```
+
+On openSUSE use `sudo zypper install ./terminaltab-*.x86_64.rpm`.
+
+**Start it** from your app menu (*TerminalTab*) or run `TerminalTab` in a terminal.
+
+**Uninstall** with `sudo apt remove terminaltab` or `sudo dnf remove terminaltab`.
+Your vault stays in `~/.config/TerminalTab/`; delete that folder to remove your saved
+servers and keys as well.
+
+Good to know:
+
+- The app needs a graphical desktop (X11 or Wayland). It also runs in WSL on
+  Windows 11.
+- At install time the package makes Electron's `chrome-sandbox` helper setuid root,
+  which Ubuntu 24.04 and later need for the sandbox to start. If the app quits right
+  away, run `sudo chmod 4755 /usr/lib/terminaltab/chrome-sandbox`.
+- Auto-lock on screen lock is Windows-only. On Linux the vault still locks after
+  inactivity and when the PC goes to sleep.
+- Moving from another PC? Use *Restore from GitHub* on the first start (see
+  [Sync between PCs](#sync-between-pcs-github)).
 
 ## Features
 
@@ -22,7 +72,7 @@ is not code-signed, so Windows SmartScreen may warn the first time: choose
 - Optional saved password per server
 - Everything encrypted with your master password (scrypt + AES-256-GCM)
 - Host-key verification (trust on first use, warning when a key changes)
-- Auto-lock after inactivity, on Windows lock and on sleep; open tabs keep running
+- Auto-lock after inactivity, on sleep and (Windows) on screen lock; open tabs keep running
   behind the lock screen but cannot receive input
 - Right-click menu in the terminal: Copy, Paste, Select all, Clear screen,
   Duplicate tab, Close tab (text fields get Cut / Copy / Paste)
@@ -39,14 +89,17 @@ npm install
 npm start          # run in development
 npm test           # vault + SSH session tests (spins up a local test SSH server)
 npm run typecheck
-npm run make       # builds out/make/squirrel.windows/x64/TerminalTab-Setup.exe
+npm run make       # Windows: out/make/squirrel.windows/x64/TerminalTab-Setup.exe
+                   # Linux:   out/make/deb/x64/*.deb and out/make/rpm/x64/*.rpm
+                   #          (needs dpkg, fakeroot and rpmbuild)
 ```
 
 Releases are built by GitHub Actions (`.github/workflows/release.yml`): bump
 `version` in `package.json`, commit, then push a matching tag, e.g.
 `git tag v1.0.1 && git push origin v1.0.1`.
 
-The vault lives at `%APPDATA%\TerminalTab\vault.json`. Forgetting the master
+The vault lives at `%APPDATA%\TerminalTab\vault.json` (Windows) or
+`~/.config/TerminalTab/vault.json` (Linux). Forgetting the master
 password means the vault cannot be decrypted. Delete the file to start over.
 
 ## Layout
