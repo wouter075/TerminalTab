@@ -5,6 +5,14 @@
 A Windows app for keeping many SSH sessions open side by side as tabs, with your
 servers and `.pem` keys saved in an encrypted vault.
 
+## Download
+
+Get `TerminalTab-Setup.exe` from the
+[latest release](https://github.com/wouter075/TerminalTab/releases/latest) and run it.
+It installs per user (no admin needed) and adds a Start menu shortcut. The installer
+is not code-signed, so Windows SmartScreen may warn the first time: choose
+*More info* → *Run anyway*. A portable `.zip` is attached as well.
+
 ## Features
 
 - SSH sessions as tabs (xterm.js + ssh2, no OpenSSH install needed)
@@ -33,6 +41,10 @@ npm test           # vault + SSH session tests (spins up a local test SSH server
 npm run typecheck
 npm run make       # builds out/make/squirrel.windows/x64/TerminalTab-Setup.exe
 ```
+
+Releases are built by GitHub Actions (`.github/workflows/release.yml`): bump
+`version` in `package.json`, commit, then push a matching tag, e.g.
+`git tag v1.0.1 && git push origin v1.0.1`.
 
 The vault lives at `%APPDATA%\TerminalTab\vault.json`. Forgetting the master
 password means the vault cannot be decrypted. Delete the file to start over.
