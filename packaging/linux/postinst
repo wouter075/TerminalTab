@@ -1,0 +1,8 @@
+#!/bin/sh
+set -e
+# Electron needs a setuid sandbox helper where unprivileged user namespaces are restricted
+# (e.g. Ubuntu 24.04 AppArmor).
+if [ -f /usr/lib/terminaltab/chrome-sandbox ]; then
+  chown root:root /usr/lib/terminaltab/chrome-sandbox
+  chmod 4755 /usr/lib/terminaltab/chrome-sandbox
+fi

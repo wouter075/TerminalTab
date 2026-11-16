@@ -1,9 +1,22 @@
 import type { ForgeConfig } from '@electron-forge/shared-types';
 import { MakerSquirrel } from '@electron-forge/maker-squirrel';
 import { MakerZIP } from '@electron-forge/maker-zip';
+import { MakerDeb } from '@electron-forge/maker-deb';
+import { MakerRpm } from '@electron-forge/maker-rpm';
 import { VitePlugin } from '@electron-forge/plugin-vite';
 import { FusesPlugin } from '@electron-forge/plugin-fuses';
 import { FuseV1Options, FuseVersion } from '@electron/fuses';
+
+const linuxOptions = {
+  name: 'terminaltab',
+  productName: 'TerminalTab',
+  genericName: 'SSH Terminal',
+  description: 'Tabbed SSH terminal manager with an encrypted key vault',
+  bin: 'TerminalTab',
+  icon: 'assets/icon.png',
+  categories: ['Network', 'System', 'Development'] as ('Network' | 'System' | 'Development')[],
+  homepage: 'https://github.com/wouter075/TerminalTab',
+};
 
 const config: ForgeConfig = {
   packagerConfig: {
@@ -11,6 +24,7 @@ const config: ForgeConfig = {
     name: 'TerminalTab',
     executableName: 'TerminalTab',
     icon: 'assets/icon', // .ico on Windows
+    extraResource: ['assets/icon.png'], // window icon on Linux
   },
   rebuildConfig: {},
   makers: [
@@ -21,6 +35,16 @@ const config: ForgeConfig = {
       loadingGif: 'assets/installer.gif',
     }),
     new MakerZIP({}, ['win32', 'darwin']),
+    new MakerDeb({
+      options: {
+        ...linuxOptions,
+        maintainer: 'Wouter <694692+wouter075@users.noreply.github.com>',
+        section: 'net',
+        // Ubuntu 24.04+ only allows Electron's sandbox with a setuid chrome-sandbox.
+        scripts: { postinst: 'packaging/linux/postinst' },
+      },
+    }),
+    new MakerRpm({ options: { ...linuxOptions, license: 'MIT' } }),
   ],
   plugins: [
     new VitePlugin({

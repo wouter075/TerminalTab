@@ -13,6 +13,12 @@ if (!app.requestSingleInstanceLock()) app.quit();
 
 let mainWindow: BrowserWindow | null = null;
 
+function windowIcon(): { icon?: string } {
+  if (!app.isPackaged) return { icon: path.join(app.getAppPath(), 'assets', 'icon.png') };
+  if (process.platform === 'linux') return { icon: path.join(process.resourcesPath, 'icon.png') };
+  return {};
+}
+
 const createWindow = () => {
   mainWindow = new BrowserWindow({
     width: 1200,
@@ -22,8 +28,8 @@ const createWindow = () => {
     title: 'TerminalTab',
     backgroundColor: '#0f1115',
     autoHideMenuBar: true,
-    // Packaged builds take the icon from the .exe; in development load it from assets/.
-    ...(app.isPackaged ? {} : { icon: path.join(app.getAppPath(), 'assets', 'icon.png') }),
+    // Packaged Windows builds take the icon from the .exe; Linux needs it set on the window.
+    ...windowIcon(),
     webPreferences: {
       preload: path.join(__dirname, 'preload.cjs'),
       contextIsolation: true,

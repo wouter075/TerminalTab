@@ -65,7 +65,7 @@ export function TerminalPane(props: Props) {
   // Create the terminal once.
   useEffect(() => {
     const term = new Terminal({
-      fontFamily: '"Cascadia Mono", "Cascadia Code", Consolas, "Courier New", monospace',
+      fontFamily: '"Cascadia Mono", "Cascadia Code", Consolas, "DejaVu Sans Mono", "Ubuntu Mono", "Liberation Mono", "Courier New", monospace',
       fontSize,
       cursorBlink: true,
       scrollback: 10000,
