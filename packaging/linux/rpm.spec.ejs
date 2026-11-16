@@ -1,5 +1,3 @@
-<%# Copy of electron-installer-redhat 4.0.0 resources/spec.ejs. Change: %install copies from
-    %{_topdir}/BUILD instead of the working directory, which rpmbuild >= 4.20 moved. %>
 %define _binary_payload w<%= compressionLevel %>.xzdio
 
 %if "%{_host_cpu}" != "%{_target_cpu}"
