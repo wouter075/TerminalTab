@@ -1,5 +1,6 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import type { ConnectionInfo, KeyInfo, SessionInfo, SessionStatus } from '../shared/types';
+import { Icon } from './Icon';
 
 interface Props {
   connection?: ConnectionInfo;
@@ -71,7 +72,17 @@ export function StatusBar({ connection, keyInfo, status, message, info, cols, ro
 
   const live = status === 'connected' ? info : undefined;
   const srv = live?.server;
-  const auth = keyInfo ? `🔑 ${keyInfo.name}` : connection?.hasPassword ? '🔒 password' : '⚠ no key';
+  const auth = keyInfo ? (
+    <>
+      <Icon name="key" /> {keyInfo.name}
+    </>
+  ) : connection?.hasPassword ? (
+    <>
+      <Icon name="lock" /> password
+    </>
+  ) : (
+    '⚠ no key'
+  );
 
   return (
     <div className="statusbar">
@@ -89,7 +100,7 @@ export function StatusBar({ connection, keyInfo, status, message, info, cols, ro
 
       {live && (
         <Item title={`Connected since ${new Date(live.connectedAt).toLocaleTimeString()}`}>
-          ⏱ {fmtDuration((now - live.connectedAt) / 1000)}
+          <Icon name="clock" /> {fmtDuration((now - live.connectedAt) / 1000)}
         </Item>
       )}
       {live?.latencyMs !== undefined && (

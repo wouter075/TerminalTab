@@ -24,7 +24,7 @@ SmartScreen may warn the first time: choose *More info* → *Run anyway*. A port
 | Distribution | File |
 | --- | --- |
 | Ubuntu, Debian, Linux Mint, Pop!_OS, … | `terminaltab_<version>_amd64.deb` |
-| Fedora, RHEL, Rocky / AlmaLinux, openSUSE, … | `terminaltab-<version>-1.x86_64.rpm` |
+| Fedora, RHEL, Rocky / AlmaLinux, … | `terminaltab-<version>-1.x86_64.rpm` |
 
 **Ubuntu / Debian.** Download the `.deb`, then in a terminal:
 
@@ -43,9 +43,7 @@ cd ~/Downloads
 sudo dnf install ./terminaltab-*.x86_64.rpm
 ```
 
-On openSUSE use `sudo zypper install ./terminaltab-*.x86_64.rpm`.
-
-**Start it** from your app menu (*TerminalTab*) or run `TerminalTab` in a terminal.
+**Start it** from your app menu (*TerminalTab*) or run `terminaltab` in a terminal.
 
 **Uninstall** with `sudo apt remove terminaltab` or `sudo dnf remove terminaltab`.
 Your vault stays in `~/.config/TerminalTab/`; delete that folder to remove your saved

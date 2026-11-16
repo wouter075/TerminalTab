@@ -1,5 +1,6 @@
 import { forwardRef, useEffect, useMemo, useState } from 'react';
 import type { ConnectionInfo, SyncStatus } from '../shared/types';
+import { Icon } from './Icon';
 import { Logo } from './Logo';
 import { ago } from './SyncSection';
 
@@ -47,7 +48,7 @@ export const Sidebar = forwardRef<HTMLInputElement, Props>(function Sidebar(
       <div className="sidebar-header">
         <Logo size={24} />
         <button className="icon-btn" title="Add server" onClick={onAdd}>
-          ＋
+          <Icon name="plus" />
         </button>
       </div>
       <input
@@ -132,10 +133,12 @@ export const Sidebar = forwardRef<HTMLInputElement, Props>(function Sidebar(
         </button>
       )}
       <div className="sidebar-footer">
-        <button onClick={onKeys}>🔑 Keys</button>
+        <button onClick={onKeys}>
+          <Icon name="key" /> Keys
+        </button>
         <button onClick={onSettings}>⚙ Settings</button>
         <button onClick={onLock} title="Lock vault">
-          🔒
+          <Icon name="lock" />
         </button>
       </div>
     </aside>

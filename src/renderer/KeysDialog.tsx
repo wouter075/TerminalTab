@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import type { PickedKeyFile } from '../shared/api';
 import type { ConnectionInfo, KeyInfo } from '../shared/types';
+import { Icon } from './Icon';
 import { Modal } from './Modal';
 import { api, errMsg } from './util';
 
@@ -129,7 +130,9 @@ export function KeysDialog({ keys, connections, onClose, onChanged }: Props) {
               </form>
             ) : (
               <>
-                <span className="key-icon">🔑</span>
+                <span className="key-icon">
+                  <Icon name="key" />
+                </span>
                 <span className="grow">
                   {k.name}
                   <span className="muted small">
@@ -143,7 +146,7 @@ export function KeysDialog({ keys, connections, onClose, onChanged }: Props) {
                   ✎
                 </button>
                 <button className="icon-btn" title="Delete" onClick={() => remove(k)}>
-                  🗑
+                  <Icon name="trash" />
                 </button>
               </>
             )}

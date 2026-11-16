@@ -729,3 +729,10 @@ a {
 .unlock-card .form label {
   color: var(--muted);
 }
+
+/* Inline SVG icons (Icon.tsx) */
+.icon {
+  display: inline-block;
+  vertical-align: -0.14em;
+  flex-shrink: 0;
+}
