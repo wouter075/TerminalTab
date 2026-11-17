@@ -1,8 +1,10 @@
 import { forwardRef, useEffect, useMemo, useState } from 'react';
-import type { ConnectionInfo, SyncStatus } from '../shared/types';
+import type { ConnectionInfo, SyncStatus, UpdateInfo } from '../shared/types';
+import { ContextMenu } from './ContextMenu';
 import { Icon } from './Icon';
 import { Logo } from './Logo';
 import { ago } from './SyncSection';
+import { api } from './util';
 
 interface Props {
   connections: ConnectionInfo[];
@@ -10,17 +12,21 @@ interface Props {
   onConnect(id: string): void;
   onEdit(c: ConnectionInfo): void;
   onAdd(): void;
+  onImport(): void;
   onKeys(): void;
+  onSnippets(): void;
   onSettings(): void;
   onLock(): void;
   syncStatus: SyncStatus;
+  update: UpdateInfo;
 }
 
 export const Sidebar = forwardRef<HTMLInputElement, Props>(function Sidebar(
-  { connections, openCounts, onConnect, onEdit, onAdd, onKeys, onSettings, onLock, syncStatus },
+  { connections, openCounts, onConnect, onEdit, onAdd, onImport, onKeys, onSnippets, onSettings, onLock, syncStatus, update },
   searchRef,
 ) {
   const [query, setQuery] = useState('');
+  const [addMenu, setAddMenu] = useState<{ x: number; y: number } | null>(null);
   // Keep "Synced 3 min ago" fresh.
   const [, setTick] = useState(0);
   useEffect(() => {
@@ -47,10 +53,28 @@ export const Sidebar = forwardRef<HTMLInputElement, Props>(function Sidebar(
     <aside className="sidebar">
       <div className="sidebar-header">
         <Logo size={24} />
-        <button className="icon-btn" title="Add server" onClick={onAdd}>
+        <button
+          className="icon-btn"
+          title="Add server"
+          onClick={(e) => {
+            const r = e.currentTarget.getBoundingClientRect();
+            setAddMenu({ x: r.left, y: r.bottom + 4 });
+          }}
+        >
           <Icon name="plus" />
         </button>
       </div>
+      {addMenu && (
+        <ContextMenu
+          x={addMenu.x}
+          y={addMenu.y}
+          onClose={() => setAddMenu(null)}
+          items={[
+            { label: 'Add server…', action: onAdd },
+            { label: 'Import from SSH config / PuTTY…', action: onImport },
+          ]}
+        />
+      )}
       <input
         ref={searchRef}
         className="search"
@@ -112,10 +136,23 @@ export const Sidebar = forwardRef<HTMLInputElement, Props>(function Sidebar(
             <button className="primary" onClick={onAdd}>
               Add your first server
             </button>
+            <button className="link-btn" onClick={onImport}>
+              or import from SSH config / PuTTY
+            </button>
           </div>
         )}
         {connections.length > 0 && groups.length === 0 && <div className="empty-hint">No matches.</div>}
       </div>
+      {update.state === 'downloaded' && (
+        <button className="update-line" onClick={() => api.restartToUpdate()} title="Restart TerminalTab to install the update">
+          <Icon name="download" /> {update.version ? `Version ${update.version}` : 'Update'} ready — restart
+        </button>
+      )}
+      {update.state === 'available' && (
+        <button className="update-line" onClick={() => window.open(update.url)} title={update.url}>
+          <Icon name="download" /> Version {update.version} available — download
+        </button>
+      )}
       {syncStatus.state !== 'off' && (
         <button
           className={`sync-line ${syncStatus.state}`}
@@ -133,10 +170,15 @@ export const Sidebar = forwardRef<HTMLInputElement, Props>(function Sidebar(
         </button>
       )}
       <div className="sidebar-footer">
-        <button onClick={onKeys}>
+        <button onClick={onKeys} title="Private keys">
           <Icon name="key" /> Keys
         </button>
-        <button onClick={onSettings}>⚙ Settings</button>
+        <button onClick={onSnippets} title="Snippets (Ctrl+Shift+P to insert)">
+          <Icon name="snippet" /> Snippets
+        </button>
+        <button onClick={onSettings} title="Settings">
+          <Icon name="gear" />
+        </button>
         <button onClick={onLock} title="Lock vault">
           <Icon name="lock" />
         </button>

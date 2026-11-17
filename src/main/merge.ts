@@ -38,12 +38,14 @@ export function mergeVaults(local: VaultData, remote: VaultData): VaultData {
     // A key deleted on another device: drop the dangling reference.
     c.keyId && !keyIds.has(c.keyId) ? { ...c, keyId: undefined } : c,
   );
+  const snippets = alive(unionById(local.snippets ?? [], remote.snippets ?? []));
   const knownHosts = latestPerHost(alive(unionById(local.knownHosts, remote.knownHosts)));
 
   return {
     ...local,
     connections,
     keys,
+    snippets,
     knownHosts,
     tombstones,
     updatedAt: Math.max(local.updatedAt, remote.updatedAt),
@@ -57,7 +59,7 @@ export function sameSyncedContent(a: VaultData, b: VaultData): boolean {
       [...xs]
         .sort((x, y) => x.id.localeCompare(y.id))
         .map((x) => JSON.stringify(x, Object.keys(x).sort()));
-    return JSON.stringify([byId(d.connections), byId(d.keys), byId(d.knownHosts), byId(d.tombstones)]);
+    return JSON.stringify([byId(d.connections), byId(d.keys), byId(d.snippets ?? []), byId(d.knownHosts), byId(d.tombstones)]);
   };
   return canon(a) === canon(b);
 }

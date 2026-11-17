@@ -1,4 +1,4 @@
-import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron';
+import { contextBridge, ipcRenderer, webUtils, type IpcRendererEvent } from 'electron';
 import type { TerminalTabApi } from './shared/api';
 
 function listen<A extends unknown[]>(channel: string, cb: (...args: A) => void): () => void {
@@ -22,6 +22,11 @@ const api: TerminalTabApi = {
   renameKey: (id, name) => ipcRenderer.invoke('key:rename', id, name),
   deleteKey: (id) => ipcRenderer.invoke('key:delete', id),
   saveSettings: (s) => ipcRenderer.invoke('settings:save', s),
+  saveSnippet: (s) => ipcRenderer.invoke('snippet:save', s),
+  deleteSnippet: (id) => ipcRenderer.invoke('snippet:delete', id),
+  scanImports: () => ipcRenderer.invoke('import:scan'),
+  applyImports: (ids, passphrases) => ipcRenderer.invoke('import:apply', ids, passphrases),
+  pickLogDir: () => ipcRenderer.invoke('settings:pickLogDir'),
 
   syncStatus: () => ipcRenderer.invoke('sync:status'),
   syncConnect: (repo, token) => ipcRenderer.invoke('sync:connect', repo, token),
@@ -36,6 +41,20 @@ const api: TerminalTabApi = {
   watchSession: (sid) => ipcRenderer.send('session:watch', sid),
   answerHostKey: (rid, trust) => ipcRenderer.send('hostkey:answer', rid, trust),
 
+  sftpList: (sid, dir) => ipcRenderer.invoke('sftp:list', sid, dir),
+  sftpMkdir: (sid, p) => ipcRenderer.invoke('sftp:mkdir', sid, p),
+  sftpRename: (sid, from, to) => ipcRenderer.invoke('sftp:rename', sid, from, to),
+  sftpRemove: (sid, p) => ipcRenderer.invoke('sftp:remove', sid, p),
+  sftpUpload: (sid, paths, dir) => ipcRenderer.invoke('sftp:upload', sid, paths, dir),
+  sftpUploadPick: (sid, dir) => ipcRenderer.invoke('sftp:uploadPick', sid, dir),
+  sftpDownload: (sid, paths, isFile) => ipcRenderer.invoke('sftp:download', sid, paths, isFile),
+  sftpCancel: (id) => ipcRenderer.invoke('sftp:cancel', id),
+  pathForFile: (file) => webUtils.getPathForFile(file),
+  showItemInFolder: (p) => ipcRenderer.invoke('shell:showItem', p),
+
+  updateStatus: () => ipcRenderer.invoke('update:get'),
+  restartToUpdate: () => ipcRenderer.invoke('update:restart'),
+
   onSessionData: (cb) => listen('session:data', cb),
   onSessionStatus: (cb) => listen('session:status', cb),
   onSessionInfo: (cb) => listen('session:info', cb),
@@ -43,6 +62,8 @@ const api: TerminalTabApi = {
   onLocked: (cb) => listen('vault:locked', cb),
   onSyncStatus: (cb) => listen('sync:status', cb),
   onDataChanged: (cb) => listen('data:changed', cb),
+  onTransfer: (cb) => listen('sftp:progress', cb),
+  onUpdate: (cb) => listen('update:status', cb),
 };
 
 contextBridge.exposeInMainWorld('terminalTab', api);

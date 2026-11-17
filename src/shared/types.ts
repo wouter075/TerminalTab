@@ -22,6 +22,14 @@ export interface KeyEntry extends VaultItem {
   passphrase?: string;
 }
 
+/** A saved command, inserted into a terminal from the palette (Ctrl+Shift+P). */
+export interface Snippet extends VaultItem {
+  name: string;
+  command: string;
+  /** Press Enter after inserting. */
+  run: boolean;
+}
+
 export interface KnownHost extends VaultItem {
   /** "host:port" */
   hostPort: string;
@@ -34,6 +42,16 @@ export interface Settings {
   fontSize: number;
   /** Poll the active server for OS / CPU / memory / disk stats for the status bar. */
   serverStats: boolean;
+  /** Terminal colour scheme id (see renderer/themes.ts). */
+  theme: string;
+  /** CSS font-family list for the terminal; empty = built-in default. */
+  fontFamily: string;
+  /** Reconnect by itself when a connection drops. */
+  autoReconnect: boolean;
+  /** Folder to save session logs to; empty = off. */
+  logDir: string;
+  /** Look for new versions on GitHub. */
+  checkUpdates: boolean;
 }
 
 /** GitHub sync configuration. Device-local: never merged from the remote copy. */
@@ -58,6 +76,7 @@ export interface SyncStatus {
 export interface VaultData {
   connections: Connection[];
   keys: KeyEntry[];
+  snippets: Snippet[];
   knownHosts: KnownHost[];
   /** Device-local, like `sync`. */
   settings: Settings;
@@ -86,6 +105,12 @@ export type VaultState = 'missing' | 'locked' | 'unlocked';
 
 export type SessionStatus = 'connecting' | 'connected' | 'closed' | 'error';
 
+/**
+ * Why a session ended: the shell exited, it was closed from this side, authentication or the
+ * host key failed, or the connection was lost (network error / unexpected close).
+ */
+export type EndReason = 'exit' | 'user' | 'auth' | 'hostkey' | 'lost';
+
 export interface HostKeyPrompt {
   requestId: string;
   hostPort: string;
@@ -94,7 +119,16 @@ export interface HostKeyPrompt {
   previous?: string;
 }
 
-export const DEFAULT_SETTINGS: Settings = { autoLockMinutes: 15, fontSize: 14, serverStats: true };
+export const DEFAULT_SETTINGS: Settings = {
+  autoLockMinutes: 15,
+  fontSize: 14,
+  serverStats: true,
+  theme: 'terminaltab',
+  fontFamily: '',
+  autoReconnect: true,
+  logDir: '',
+  checkUpdates: true,
+};
 
 /** Remote machine stats (Linux only). Sizes are in bytes. */
 export interface ServerStats {
@@ -122,9 +156,60 @@ export function emptyVault(): VaultData {
   return {
     connections: [],
     keys: [],
+    snippets: [],
     knownHosts: [],
     settings: { ...DEFAULT_SETTINGS },
     tombstones: [],
     updatedAt: Date.now(),
   };
+}
+
+/** One entry in an SFTP directory listing. */
+export interface RemoteEntry {
+  name: string;
+  type: 'file' | 'dir' | 'link' | 'other';
+  size: number;
+  /** ms since epoch */
+  mtime: number;
+  /** Unix permission bits, e.g. 0o755 */
+  mode: number;
+}
+
+export interface TransferProgress {
+  id: string;
+  sessionId: string;
+  direction: 'up' | 'down';
+  name: string;
+  done: number;
+  total: number;
+  state: 'running' | 'done' | 'error' | 'cancelled';
+  error?: string;
+}
+
+/** A server found in ~/.ssh/config or PuTTY, offered for import. */
+export interface ImportCandidate {
+  id: string;
+  source: 'ssh-config' | 'putty';
+  name: string;
+  host: string;
+  port: number;
+  username: string;
+  /** Path of the private key file, if one is configured. */
+  keyPath?: string;
+  /** Problem with the key file (missing, unsupported), if any. */
+  keyProblem?: string;
+  /** The key file needs a passphrase. */
+  keyEncrypted?: boolean;
+  /** A key with the same fingerprint is already in the vault. */
+  keyExisting?: string;
+  /** A server with the same host, port and user is already saved. */
+  exists: boolean;
+  /** e.g. ProxyJump, which TerminalTab does not support yet. */
+  note?: string;
+}
+
+export interface UpdateInfo {
+  state: 'none' | 'available' | 'downloaded';
+  version?: string;
+  url?: string;
 }

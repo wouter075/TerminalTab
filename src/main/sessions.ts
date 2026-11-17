@@ -1,11 +1,12 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { Client, utils, type ClientChannel, type ConnectConfig } from 'ssh2';
-import type { Connection, KeyEntry, ServerStats, SessionInfo, SessionStatus } from '../shared/types';
+import type { Connection, EndReason, KeyEntry, ServerStats, SessionInfo, SessionStatus } from '../shared/types';
 import { parseStats, STATS_SCRIPT } from './serverStats';
 
 export interface SessionCallbacks {
   onData(sessionId: string, data: Uint8Array): void;
-  onStatus(sessionId: string, status: SessionStatus, message?: string): void;
+  /** `reason` is set when the session ends ('closed' / 'error'). */
+  onStatus(sessionId: string, status: SessionStatus, message?: string, reason?: EndReason): void;
   /** Resolve true to trust the host key. */
   verifyHostKey(hostPort: string, fingerprint: string): Promise<boolean>;
   /** Live stats for the watched session (see SessionManager.watch). */
@@ -39,6 +40,8 @@ interface Session {
   server?: ServerStats | null;
   fetchingStats?: boolean;
   statsFailures: number;
+  /** close() was called from this side. */
+  closing?: boolean;
 }
 
 export function fingerprintOf(key: Buffer): string {
@@ -170,11 +173,13 @@ export class SessionManager {
     this.sessions.set(sessionId, session);
     const hostPort = `${conn.host}:${conn.port}`;
     let ended = false;
-    const end = (status: SessionStatus, message?: string) => {
+    let shellExited = false;
+    let hostRejected = false;
+    const end = (status: SessionStatus, message: string | undefined, reason: EndReason) => {
       if (ended) return;
       ended = true;
       this.sessions.delete(sessionId);
-      this.cb.onStatus(sessionId, status, message);
+      this.cb.onStatus(sessionId, status, message, session.closing ? 'user' : reason);
     };
 
     this.cb.onStatus(sessionId, 'connecting', `Connecting to ${conn.username}@${hostPort}…`);
@@ -183,7 +188,7 @@ export class SessionManager {
       .on('ready', () => {
         client.shell({ term: 'xterm-256color', cols: session.cols, rows: session.rows }, (err, stream) => {
           if (err) {
-            end('error', err.message);
+            end('error', err.message, 'lost');
             client.end();
             return;
           }
@@ -197,9 +202,10 @@ export class SessionManager {
           stream.on('data', onData);
           stream.stderr.on('data', onData);
           if (this.watched === sessionId) this.refresh();
+          stream.on('exit', () => (shellExited = true));
           stream.on('close', () => {
             client.end();
-            end('closed', 'Connection closed');
+            end('closed', shellExited ? 'Session ended' : 'Connection lost', shellExited ? 'exit' : 'lost');
           });
         });
       })
@@ -207,10 +213,12 @@ export class SessionManager {
         // Answer password-style prompts with the saved password, if any.
         finish(prompts.map(() => conn.password ?? ''));
       })
-      .on('error', (err: Error & { level?: string }) =>
-        end('error', err.level === 'client-authentication' ? describeAuthFailure(conn, key) : err.message),
-      )
-      .on('close', () => end('closed', 'Connection closed'));
+      .on('error', (err: Error & { level?: string }) => {
+        if (err.level === 'client-authentication') end('error', describeAuthFailure(conn, key), 'auth');
+        else if (hostRejected) end('error', 'Host key not trusted', 'hostkey');
+        else end('error', err.message, 'lost');
+      })
+      .on('close', () => end('closed', shellExited ? 'Session ended' : 'Connection lost', shellExited ? 'exit' : 'lost'));
 
     const config: ConnectConfig = {
       host: conn.host,
@@ -220,7 +228,11 @@ export class SessionManager {
       keepaliveInterval: 30000,
       tryKeyboard: !!conn.password,
       hostVerifier: (hostKey: Buffer, verify: (ok: boolean) => void) => {
-        this.cb.verifyHostKey(hostPort, fingerprintOf(hostKey)).then(verify, () => verify(false));
+        const answer = (ok: boolean) => {
+          if (!ok) hostRejected = true;
+          verify(ok);
+        };
+        this.cb.verifyHostKey(hostPort, fingerprintOf(hostKey)).then(answer, () => answer(false));
       },
     } as ConnectConfig;
     if (key) {
@@ -233,7 +245,7 @@ export class SessionManager {
       client.connect(config);
     } catch (err) {
       // e.g. unparseable private key / wrong passphrase
-      end('error', (err as Error).message);
+      end('error', (err as Error).message, 'auth');
     }
     return sessionId;
   }
@@ -254,7 +266,16 @@ export class SessionManager {
   }
 
   close(sessionId: string): void {
-    this.sessions.get(sessionId)?.client.end();
+    const s = this.sessions.get(sessionId);
+    if (!s) return;
+    s.closing = true;
+    s.client.end();
+  }
+
+  /** The ssh2 client of a connected session (used for SFTP). */
+  getClient(sessionId: string): Client | undefined {
+    const s = this.sessions.get(sessionId);
+    return s?.stream ? s.client : undefined;
   }
 
   closeAll(): void {

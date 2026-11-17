@@ -1,9 +1,9 @@
-import type { SessionInfo, SessionStatus } from '../shared/types';
+import type { EndReason, SessionInfo, SessionStatus } from '../shared/types';
 import { api } from './util';
 
 type Event =
   | { kind: 'data'; data: Uint8Array }
-  | { kind: 'status'; status: SessionStatus; message?: string }
+  | { kind: 'status'; status: SessionStatus; message?: string; reason?: EndReason }
   | { kind: 'info'; info: SessionInfo };
 type Listener = (e: Event) => void;
 
@@ -25,7 +25,7 @@ function dispatch(sessionId: string, e: Event) {
 }
 
 api.onSessionData((sid, data) => dispatch(sid, { kind: 'data', data }));
-api.onSessionStatus((sid, status, message) => dispatch(sid, { kind: 'status', status, message }));
+api.onSessionStatus((sid, status, message, reason) => dispatch(sid, { kind: 'status', status, message, reason }));
 api.onSessionInfo((sid, info) => dispatch(sid, { kind: 'info', info }));
 
 export function subscribe(sessionId: string, l: Listener): () => void {

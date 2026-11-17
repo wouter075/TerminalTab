@@ -1,13 +1,29 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { AppData } from '../shared/api';
-import type { ConnectionInfo, HostKeyPrompt, SessionInfo, SessionStatus, SyncStatus, VaultState } from '../shared/types';
+import type {
+  ConnectionInfo,
+  EndReason,
+  HostKeyPrompt,
+  SessionInfo,
+  SessionStatus,
+  SyncStatus,
+  TransferProgress,
+  UpdateInfo,
+  VaultState,
+} from '../shared/types';
 import { DEFAULT_SETTINGS } from '../shared/types';
 import { ConnectionDialog } from './ConnectionDialog';
+import { Icon } from './Icon';
+import { ImportDialog } from './ImportDialog';
 import { KeysDialog } from './KeysDialog';
 import { Logo } from './Logo';
 import { Modal } from './Modal';
+import { Palette } from './Palette';
+import { panes } from './panes';
 import { SettingsDialog } from './SettingsDialog';
+import { SftpPanel, shellQuote } from './SftpPanel';
 import { Sidebar } from './Sidebar';
+import { SnippetsDialog } from './SnippetsDialog';
 import { StatusBar } from './StatusBar';
 import { TerminalPane } from './TerminalPane';
 import { UnlockScreen } from './UnlockScreen';
@@ -23,12 +39,37 @@ interface Tab {
   info?: SessionInfo;
   cols?: number;
   rows?: number;
+  /** The tab was connected at least once (so a drop is worth reconnecting). */
+  wasConnected?: boolean;
+  /** Automatic reconnect: when the next try happens, and how many tries so far. */
+  retryAt?: number;
+  retries?: number;
+  /** SFTP side panel. */
+  files?: boolean;
+  filesPath?: string;
 }
 
-type Dialog = { kind: 'conn'; connection?: ConnectionInfo } | { kind: 'keys' } | { kind: 'settings' } | null;
+type Dialog =
+  | { kind: 'conn'; connection?: ConnectionInfo }
+  | { kind: 'keys' }
+  | { kind: 'settings' }
+  | { kind: 'snippets' }
+  | { kind: 'import' }
+  | null;
 
-const EMPTY: AppData = { connections: [], keys: [], settings: DEFAULT_SETTINGS };
+const EMPTY: AppData = { connections: [], keys: [], snippets: [], settings: DEFAULT_SETTINGS };
+/** Seconds to wait before each automatic reconnect attempt. */
+const RETRY_DELAYS = [2, 5, 10, 30];
+const SFTP_WIDTH_KEY = 'terminaltab.sftpWidth';
 let tabSeq = 0;
+
+function loadSftpWidth(): number {
+  try {
+    return Number(localStorage.getItem(SFTP_WIDTH_KEY)) || 380;
+  } catch {
+    return 380;
+  }
+}
 
 export function App() {
   const [vaultState, setVaultState] = useState<VaultState | null>(null);
@@ -36,9 +77,16 @@ export function App() {
   const [tabs, setTabs] = useState<Tab[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [dialog, setDialog] = useState<Dialog>(null);
+  const [palette, setPalette] = useState<{ snippetsOnly: boolean } | null>(null);
   const [hostPrompts, setHostPrompts] = useState<HostKeyPrompt[]>([]);
   const [syncStatus, setSyncStatus] = useState<SyncStatus>({ state: 'off' });
+  const [transfers, setTransfers] = useState<Map<string, TransferProgress>>(new Map());
+  const [update, setUpdate] = useState<UpdateInfo>({ state: 'none' });
+  const [sftpWidth, setSftpWidth] = useState(loadSftpWidth);
+  const [now, setNow] = useState(Date.now());
   const searchRef = useRef<HTMLInputElement>(null);
+  const settingsRef = useRef(data.settings);
+  settingsRef.current = data.settings;
 
   const refresh = useCallback(async () => {
     const state = await api.vaultState();
@@ -51,24 +99,40 @@ export function App() {
 
   useEffect(() => {
     refresh();
-    const offLock = api.onLocked(() => {
-      setVaultState('locked');
-      setDialog(null);
-      (document.activeElement as HTMLElement | null)?.blur();
-    });
-    const offHost = api.onHostKeyPrompt((p) => setHostPrompts((ps) => [...ps, p]));
-    const offSync = api.onSyncStatus(setSyncStatus);
-    // Servers/keys changed by a sync from another PC.
-    const offData = api.onDataChanged(() => {
-      api.getData().then(setData, () => undefined);
-    });
-    return () => {
-      offLock();
-      offHost();
-      offSync();
-      offData();
-    };
+    api.updateStatus().then(setUpdate, () => undefined);
+    const offs = [
+      api.onLocked(() => {
+        setVaultState('locked');
+        setDialog(null);
+        setPalette(null);
+        (document.activeElement as HTMLElement | null)?.blur();
+      }),
+      api.onHostKeyPrompt((p) => setHostPrompts((ps) => [...ps, p])),
+      api.onSyncStatus(setSyncStatus),
+      // Servers/keys/snippets changed by a sync from another PC.
+      api.onDataChanged(() => {
+        api.getData().then(setData, () => undefined);
+      }),
+      api.onTransfer((p) =>
+        setTransfers((m) => {
+          const next = new Map(m);
+          if (p.state === 'running') next.set(p.id, p);
+          else next.delete(p.id);
+          return next;
+        }),
+      ),
+      api.onUpdate(setUpdate),
+    ];
+    return () => offs.forEach((off) => off());
   }, [refresh]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(SFTP_WIDTH_KEY, String(sftpWidth));
+    } catch {
+      /* private mode */
+    }
+  }, [sftpWidth]);
 
   const connById = useMemo(() => new Map(data.connections.map((c) => [c.id, c])), [data.connections]);
   const openCounts = useMemo(() => {
@@ -92,25 +156,91 @@ export function App() {
     });
   }, []);
 
-  const patchTab = (id: string, patch: Partial<Tab>) =>
-    setTabs((ts) => ts.map((t) => (t.id === id ? { ...t, ...patch } : t)));
+  const patchTab = useCallback(
+    (id: string, patch: Partial<Tab>) => setTabs((ts) => ts.map((t) => (t.id === id ? { ...t, ...patch } : t))),
+    [],
+  );
 
-  const reconnect = (id: string) =>
+  const reconnect = useCallback(
+    (id: string, manual = true) =>
+      setTabs((ts) =>
+        ts.map((t) =>
+          t.id === id
+            ? {
+                ...t,
+                attempt: t.attempt + 1,
+                status: 'connecting',
+                info: undefined,
+                retryAt: undefined,
+                retries: manual ? 0 : t.retries,
+              }
+            : t,
+        ),
+      ),
+    [],
+  );
+
+  /** Status from a terminal pane; schedules an automatic reconnect when the connection was lost. */
+  const onTabStatus = useCallback((id: string, status: SessionStatus, message?: string, reason?: EndReason) => {
     setTabs((ts) =>
-      ts.map((t) => (t.id === id ? { ...t, attempt: t.attempt + 1, status: 'connecting', info: undefined } : t)),
+      ts.map((t) => {
+        if (t.id !== id) return t;
+        if (status === 'connected') return { ...t, status, message, wasConnected: true, retries: 0, retryAt: undefined };
+        if (status !== 'closed' && status !== 'error') return { ...t, status, message };
+        const retries = t.retries ?? 0;
+        const retry =
+          reason === 'lost' && t.wasConnected && settingsRef.current.autoReconnect && retries < RETRY_DELAYS.length;
+        return {
+          ...t,
+          status,
+          message,
+          retryAt: retry ? Date.now() + RETRY_DELAYS[retries] * 1000 : undefined,
+          retries: retry ? retries + 1 : retries,
+        };
+      }),
     );
+  }, []);
+
+  // Drive automatic reconnects (and the countdown shown in the reconnect bar).
+  const pendingRetry = tabs.some((t) => t.retryAt);
+  useEffect(() => {
+    if (!pendingRetry) return;
+    const timer = setInterval(() => {
+      const t0 = Date.now();
+      setNow(t0);
+      if (vaultState !== 'unlocked') return; // wait until unlocked
+      for (const t of tabs) if (t.retryAt && t.retryAt <= t0) reconnect(t.id, false);
+    }, 250);
+    return () => clearInterval(timer);
+  }, [pendingRetry, tabs, vaultState, reconnect]);
 
   // Live status-bar info is only collected for the tab being viewed.
-  const activeSessionId = tabs.find((t) => t.id === activeId)?.sessionId ?? null;
+  const activeTab = tabs.find((t) => t.id === activeId);
+  const activeSessionId = activeTab?.sessionId ?? null;
   useEffect(() => {
     api.watchSession(activeSessionId);
   }, [activeSessionId]);
+
+  const toggleFiles = useCallback(
+    (id?: string | null) => {
+      const tabId = id ?? activeId;
+      if (!tabId) return;
+      setTabs((ts) => ts.map((t) => (t.id === tabId ? { ...t, files: !t.files } : t)));
+    },
+    [activeId],
+  );
 
   // Keyboard shortcuts.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (vaultState !== 'unlocked' || !e.ctrlKey) return;
-      if (e.code === 'KeyT') {
+      if (e.shiftKey && e.code === 'KeyP') {
+        e.preventDefault();
+        setPalette((p) => (p ? null : { snippetsOnly: false }));
+      } else if (e.shiftKey && e.code === 'KeyE') {
+        e.preventDefault();
+        toggleFiles();
+      } else if (e.code === 'KeyT') {
         e.preventDefault();
         searchRef.current?.focus();
         searchRef.current?.select();
@@ -126,7 +256,7 @@ export function App() {
     };
     window.addEventListener('keydown', onKey, true);
     return () => window.removeEventListener('keydown', onKey, true);
-  }, [vaultState, activeId, tabs, closeTab]);
+  }, [vaultState, activeId, tabs, closeTab, toggleFiles]);
 
   const answerHost = (trust: boolean) => {
     const [p, ...rest] = hostPrompts;
@@ -135,10 +265,16 @@ export function App() {
     setHostPrompts(rest);
   };
 
+  const closePalette = useCallback(() => {
+    setPalette(null);
+    if (activeId) requestAnimationFrame(() => panes.get(activeId)?.focus());
+  }, [activeId]);
+
   if (vaultState === null) return null;
 
-  const activeTab = tabs.find((t) => t.id === activeId);
   const prompt = hostPrompts[0];
+  const activeConnected = !!activeTab?.sessionId && activeTab.status === 'connected';
+  const activeTransfers = [...transfers.values()].filter((t) => t.sessionId === activeTab?.sessionId);
 
   return (
     <>
@@ -151,75 +287,130 @@ export function App() {
             onConnect={connect}
             onEdit={(c) => setDialog({ kind: 'conn', connection: c })}
             onAdd={() => setDialog({ kind: 'conn' })}
+            onImport={() => setDialog({ kind: 'import' })}
             onKeys={() => setDialog({ kind: 'keys' })}
+            onSnippets={() => setDialog({ kind: 'snippets' })}
             onSettings={() => setDialog({ kind: 'settings' })}
             onLock={() => api.lock()}
             syncStatus={syncStatus}
+            update={update}
           />
           <main className="main">
             <div className="tabbar">
-              {tabs.map((t) => {
-                const c = connById.get(t.connectionId);
-                return (
-                  <div
-                    key={t.id}
-                    className={`tab ${t.id === activeId ? 'active' : ''}`}
-                    style={{ borderTopColor: c?.color || undefined }}
-                    onMouseDown={(e) => {
-                      if (e.button === 1) {
-                        e.preventDefault();
-                        closeTab(t.id);
-                      } else setActiveId(t.id);
-                    }}
-                    title={t.message}
-                  >
-                    <span className={`status-dot ${t.status}`} />
-                    <span className="tab-title">{c?.name ?? 'Deleted server'}</span>
-                    <button
-                      className="tab-close"
-                      onMouseDown={(e) => e.stopPropagation()}
-                      onClick={() => closeTab(t.id)}
-                      aria-label="Close tab"
+              <div className="tabs">
+                {tabs.map((t) => {
+                  const c = connById.get(t.connectionId);
+                  return (
+                    <div
+                      key={t.id}
+                      className={`tab ${t.id === activeId ? 'active' : ''}`}
+                      style={{ borderTopColor: c?.color || undefined }}
+                      onMouseDown={(e) => {
+                        if (e.button === 1) {
+                          e.preventDefault();
+                          closeTab(t.id);
+                        } else setActiveId(t.id);
+                      }}
+                      title={t.message}
                     >
-                      ✕
-                    </button>
-                  </div>
-                );
-              })}
-            </div>
-            <div className="terminals">
-              {tabs.map((t) => (
-                <TerminalPane
-                  key={t.id}
-                  connectionId={t.connectionId}
-                  attempt={t.attempt}
-                  active={t.id === activeId && vaultState === 'unlocked'}
-                  fontSize={data.settings.fontSize}
-                  onStatus={(status, message) => patchTab(t.id, { status, message })}
-                  onSession={(sessionId) => patchTab(t.id, { sessionId })}
-                  onInfo={(info) => patchTab(t.id, { info })}
-                  onSize={(cols, rows) => patchTab(t.id, { cols, rows })}
-                  onDuplicate={() => connect(t.connectionId)}
-                  onCloseTab={() => closeTab(t.id)}
-                />
-              ))}
-              {activeTab && (activeTab.status === 'closed' || activeTab.status === 'error') && (
-                <div className="reconnect-bar">
-                  <span>{activeTab.message ?? 'Disconnected'}</span>
-                  <button className="primary" onClick={() => reconnect(activeTab.id)}>
-                    Reconnect
+                      <span className={`status-dot ${t.retryAt ? 'connecting' : t.status}`} />
+                      <span className="tab-title">{c?.name ?? 'Deleted server'}</span>
+                      <button
+                        className="tab-close"
+                        onMouseDown={(e) => e.stopPropagation()}
+                        onClick={() => closeTab(t.id)}
+                        aria-label="Close tab"
+                      >
+                        ✕
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+              {activeTab && (
+                <div className="tabbar-actions">
+                  <button
+                    className="icon-btn"
+                    title="Snippets (Ctrl+Shift+P)"
+                    onClick={() => setPalette({ snippetsOnly: true })}
+                  >
+                    <Icon name="snippet" />
                   </button>
-                  <button onClick={() => closeTab(activeTab.id)}>Close tab</button>
+                  <button
+                    className={`icon-btn ${activeTab.files ? 'on' : ''}`}
+                    title="Files — SFTP (Ctrl+Shift+E)"
+                    onClick={() => toggleFiles()}
+                  >
+                    <Icon name="files" />
+                  </button>
                 </div>
               )}
-              {tabs.length === 0 && (
-                <div className="empty-state">
-                  <Logo size={88} text={false} />
-                  <p>Pick a server on the left to open it in a new tab.</p>
-                  <p className="muted small">
-                    Ctrl+T search · Ctrl+W close tab · Ctrl+Tab next tab · select to copy · right-click to paste
-                  </p>
-                </div>
+            </div>
+            <div className="terminals">
+              <div className="terminal-area">
+                {tabs.map((t) => (
+                  <TerminalPane
+                    key={t.id}
+                    tabId={t.id}
+                    connectionId={t.connectionId}
+                    attempt={t.attempt}
+                    active={t.id === activeId && vaultState === 'unlocked' && !palette}
+                    fontSize={data.settings.fontSize}
+                    fontFamily={data.settings.fontFamily}
+                    theme={data.settings.theme}
+                    onStatus={(status, message, reason) => onTabStatus(t.id, status, message, reason)}
+                    onSession={(sessionId) => patchTab(t.id, { sessionId })}
+                    onInfo={(info) => patchTab(t.id, { info })}
+                    onSize={(cols, rows) => patchTab(t.id, { cols, rows })}
+                    onDuplicate={() => connect(t.connectionId)}
+                    onCloseTab={() => closeTab(t.id)}
+                    onSnippets={() => setPalette({ snippetsOnly: true })}
+                    onToggleFiles={() => toggleFiles(t.id)}
+                  />
+                ))}
+                {activeTab && (activeTab.status === 'closed' || activeTab.status === 'error') && (
+                  <div className="reconnect-bar">
+                    <span>
+                      {activeTab.retryAt
+                        ? `${activeTab.message ?? 'Connection lost'} — reconnecting in ${Math.max(
+                            0,
+                            Math.ceil((activeTab.retryAt - now) / 1000),
+                          )} s…`
+                        : (activeTab.message ?? 'Disconnected')}
+                    </span>
+                    <button className="primary" onClick={() => reconnect(activeTab.id)}>
+                      {activeTab.retryAt ? 'Now' : 'Reconnect'}
+                    </button>
+                    {activeTab.retryAt ? (
+                      <button onClick={() => patchTab(activeTab.id, { retryAt: undefined })}>Cancel</button>
+                    ) : (
+                      <button onClick={() => closeTab(activeTab.id)}>Close tab</button>
+                    )}
+                  </div>
+                )}
+                {tabs.length === 0 && (
+                  <div className="empty-state">
+                    <Logo size={88} text={false} />
+                    <p>Pick a server on the left to open it in a new tab.</p>
+                    <p className="muted small">
+                      Ctrl+T search · Ctrl+W close tab · Ctrl+Tab next tab · Ctrl+F find · Ctrl+Shift+P snippets ·
+                      Ctrl+Shift+E files · select to copy · right-click for more
+                    </p>
+                  </div>
+                )}
+              </div>
+              {activeTab?.files && (
+                <SftpPanel
+                  key={activeTab.id}
+                  sessionId={activeConnected ? activeTab.sessionId! : null}
+                  path={activeTab.filesPath}
+                  width={sftpWidth}
+                  transfers={activeTransfers}
+                  onPath={(p) => patchTab(activeTab.id, { filesPath: p })}
+                  onWidth={setSftpWidth}
+                  onCd={(p) => panes.get(activeTab.id)?.insert(`cd ${shellQuote(p)}`, true)}
+                  onClose={() => toggleFiles(activeTab.id)}
+                />
               )}
             </div>
             {activeTab && (
@@ -244,6 +435,19 @@ export function App() {
         </div>
       )}
 
+      {vaultState === 'unlocked' && palette && (
+        <Palette
+          snippets={data.snippets}
+          connections={data.connections}
+          canInsert={activeConnected}
+          snippetsOnly={palette.snippetsOnly}
+          onSnippet={(s) => activeId && panes.get(activeId)?.insert(s.command, s.run)}
+          onServer={connect}
+          onManageSnippets={() => setDialog({ kind: 'snippets' })}
+          onClose={closePalette}
+        />
+      )}
+
       {vaultState === 'unlocked' && dialog?.kind === 'conn' && (
         <ConnectionDialog
           data={data}
@@ -258,6 +462,12 @@ export function App() {
       )}
       {vaultState === 'unlocked' && dialog?.kind === 'keys' && (
         <KeysDialog keys={data.keys} connections={data.connections} onClose={() => setDialog(null)} onChanged={refresh} />
+      )}
+      {vaultState === 'unlocked' && dialog?.kind === 'snippets' && (
+        <SnippetsDialog snippets={data.snippets} onClose={() => setDialog(null)} onChanged={refresh} />
+      )}
+      {vaultState === 'unlocked' && dialog?.kind === 'import' && (
+        <ImportDialog onClose={() => setDialog(null)} onImported={refresh} />
       )}
       {vaultState === 'unlocked' && dialog?.kind === 'settings' && (
         <SettingsDialog
@@ -281,11 +491,7 @@ export function App() {
               First connection to <b>{prompt.hostPort}</b>. Verify the fingerprint if you can, then trust it.
             </p>
           )}
-          {prompt.previous && (
-            <p className="mono small">
-              Previous: {prompt.previous}
-            </p>
-          )}
+          {prompt.previous && <p className="mono small">Previous: {prompt.previous}</p>}
           <p className="mono small">Fingerprint: {prompt.fingerprint}</p>
           <div className="modal-footer flush">
             <span className="spacer" />

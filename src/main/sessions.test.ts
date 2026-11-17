@@ -1,7 +1,7 @@
 import type { AddressInfo } from 'node:net';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { Server, utils } from 'ssh2';
-import type { Connection, KeyEntry, SessionInfo, SessionStatus } from '../shared/types';
+import type { Connection, EndReason, KeyEntry, SessionInfo, SessionStatus } from '../shared/types';
 import { keyFingerprint, SessionManager } from './sessions';
 
 const hostKey = utils.generateKeyPairSync('ed25519');
@@ -52,6 +52,8 @@ beforeAll(async () => {
               if (s.trim() === 'exit') {
                 stream.exit(0);
                 stream.end();
+              } else if (s.trim() === 'drop') {
+                client.end(); // the server goes away without the shell exiting
               } else stream.write(s.toUpperCase());
             });
           });
@@ -66,14 +68,14 @@ beforeAll(async () => {
 afterAll(() => new Promise<void>((r) => server.close(() => r())));
 
 function harness(trust = true) {
-  const events: { sid: string; status: SessionStatus; message?: string }[] = [];
+  const events: { sid: string; status: SessionStatus; message?: string; reason?: EndReason }[] = [];
   const output = new Map<string, string>();
   const fingerprints: string[] = [];
   const infos: SessionInfo[] = [];
   const mgr = new SessionManager({
     onInfo: (_sid, info) => infos.push(info),
     onData: (sid, d) => output.set(sid, (output.get(sid) ?? '') + Buffer.from(d).toString()),
-    onStatus: (sid, status, message) => events.push({ sid, status, message }),
+    onStatus: (sid, status, message, reason) => events.push({ sid, status, message, reason }),
     verifyHostKey: async (_hp, fp) => {
       fingerprints.push(fp);
       return trust;
@@ -111,6 +113,24 @@ describe('SessionManager', () => {
     h.mgr.write(sid, 'exit');
     await h.waitFor(() => h.events.some((e) => e.sid === sid && e.status === 'closed'));
     expect(h.events.filter((e) => e.sid === sid).map((e) => e.status)).toEqual(['connecting', 'connected', 'closed']);
+    expect(h.events.at(-1)).toMatchObject({ reason: 'exit', message: 'Session ended' });
+  });
+
+  it('tells a lost connection apart from closing the tab', async () => {
+    const h = harness();
+    const lost = h.mgr.open(conn({}), key, 80, 24);
+    await h.waitFor(() => (h.output.get(lost) ?? '').includes('welcome'));
+    expect(h.mgr.getClient(lost)).toBeDefined();
+    h.mgr.write(lost, 'drop');
+    await h.waitFor(() => h.events.some((e) => e.sid === lost && (e.status === 'closed' || e.status === 'error')));
+    expect(h.events.find((e) => e.sid === lost && e.reason)!.reason).toBe('lost');
+    expect(h.mgr.getClient(lost)).toBeUndefined();
+
+    const user = h.mgr.open(conn({}), key, 80, 24);
+    await h.waitFor(() => (h.output.get(user) ?? '').includes('welcome'));
+    h.mgr.close(user);
+    await h.waitFor(() => h.events.some((e) => e.sid === user && e.status === 'closed'));
+    expect(h.events.find((e) => e.sid === user && e.reason)!.reason).toBe('user');
   });
 
   it('logs in with a password', async () => {
@@ -125,6 +145,7 @@ describe('SessionManager', () => {
     const sid = h.mgr.open(conn({}), key, 80, 24);
     await h.waitFor(() => h.events.some((e) => e.sid === sid && e.status === 'error'));
     expect(h.output.get(sid)).toBeUndefined();
+    expect(h.events.find((e) => e.status === 'error')!.reason).toBe('hostkey');
   });
 
   it('reports a wrong key passphrase as an error', async () => {
@@ -141,6 +162,7 @@ describe('SessionManager', () => {
     const msg = h.events.find((e) => e.status === 'error')!.message!;
     expect(msg).toContain('alice@127.0.0.1 rejected key "laptop"');
     expect(msg).toContain(keyFingerprint(other.private)!.fingerprint);
+    expect(h.events.find((e) => e.status === 'error')!.reason).toBe('auth');
   });
 
   it('explains when no key is selected', async () => {

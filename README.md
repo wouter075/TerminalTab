@@ -65,20 +65,45 @@ Good to know:
 
 - SSH sessions as tabs (xterm.js + ssh2, no OpenSSH install needed)
 - Saved servers with groups, colors and search (Ctrl+T, Enter to connect)
+- **Import** servers and their keys from `~/.ssh/config` (Host blocks, `Host *`
+  defaults, `Include`) and from saved PuTTY sessions on Windows
 - Import `.pem` / OpenSSH private keys (passphrase-protected keys supported); the key
   is copied into the vault, so the original file can be removed
 - Optional saved password per server
 - Everything encrypted with your master password (scrypt + AES-256-GCM)
 - Host-key verification (trust on first use, warning when a key changes)
+- **Files (SFTP)** side panel per tab (Ctrl+Shift+E): browse the server, drag files
+  and folders from Explorer / your file manager to upload, download, rename, delete,
+  new folder, and "cd here" to jump the terminal to a folder
+- **Snippets**: saved commands, inserted into the current tab from the palette
+  (Ctrl+Shift+P) or the right-click menu; optionally run straight away. They sync
+  with your vault
+- **Find** in the scrollback (Ctrl+F) with match case and regex
+- **Auto-reconnect** when a connection drops (not after you type `exit`)
+- **Colour schemes** (TerminalTab Dark, One Dark, Solarized Dark/Light, Gruvbox,
+  Nord) and any installed font
+- **Session logs** (optional): everything shown in a tab saved as plain text per server
+- **Auto-update**: Windows installs new versions in the background and applies
+  them on restart; Linux shows a notice with a download link
 - Auto-lock after inactivity, on sleep and (Windows) on screen lock; open tabs keep running
   behind the lock screen but cannot receive input
-- Right-click menu in the terminal: Copy, Paste, Select all, Clear screen,
-  Duplicate tab, Close tab (text fields get Cut / Copy / Paste)
+- Right-click menu in the terminal: Copy, Paste, Select all, Find, Snippets, Files,
+  Clear screen, Duplicate tab, Close tab (text fields get Cut / Copy / Paste)
 - Status bar for the visible tab: connection, key, connected time, latency,
   server OS / CPU load / RAM / disk / uptime (Linux, can be turned off in
   Settings), terminal size and data sent/received
-- Select to copy, Ctrl+Shift+C / Ctrl+Shift+V, Ctrl+W close tab,
-  Ctrl+Tab / Ctrl+Shift+Tab switch tabs, middle-click a tab to close it
+
+### Keyboard shortcuts
+
+| Keys | Action |
+| --- | --- |
+| Ctrl+T | Search servers (Enter opens the first match) |
+| Ctrl+Shift+P | Palette: insert a snippet or open a server |
+| Ctrl+Shift+E | Show / hide the Files (SFTP) panel |
+| Ctrl+F | Find in the terminal (Enter / Shift+Enter: next / previous) |
+| Ctrl+Shift+C / Ctrl+Shift+V | Copy / paste (selecting text also copies) |
+| Ctrl+W | Close tab (middle-click a tab works too) |
+| Ctrl+Tab / Ctrl+Shift+Tab | Next / previous tab |
 
 ## Development
 
@@ -108,6 +133,10 @@ password means the vault cannot be decrypted. Delete the file to start over.
 | `src/main/vault.ts` | Encrypted vault (file format, unlock, save) |
 | `src/main/sessions.ts` | SSH connections (one ssh2 client per tab), latency + traffic counters |
 | `src/main/serverStats.ts` | Read-only stats script and its parser |
+| `src/main/sftp.ts` | SFTP over the tab's connection: list, transfers with progress, rename, delete |
+| `src/main/importers.ts`, `importScan.ts` | `~/.ssh/config` and PuTTY import |
+| `src/main/sessionLog.ts` | Plain-text session logs |
+| `src/main/updates.ts` | Auto-update (Squirrel via update.electronjs.org) and Linux release check |
 | `src/main/sync.ts`, `merge.ts`, `github.ts` | GitHub sync: pull / merge / push of the encrypted vault |
 | `src/main/ipc.ts` | IPC handlers, key import, host-key prompts, auto-lock |
 | `src/preload.ts` | `window.terminalTab` bridge (the renderer has no Node access) |
@@ -119,7 +148,7 @@ names and flags.
 
 ## Sync between PCs (GitHub)
 
-TerminalTab can sync your servers, keys and trusted host keys through a **private**
+TerminalTab can sync your servers, keys, snippets and trusted host keys through a **private**
 GitHub repository. Only the encrypted vault file (`terminaltab-vault.json`) is
 uploaded; GitHub never sees your data or your master password.
 

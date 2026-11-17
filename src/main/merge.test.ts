@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { emptyVault, type Connection, type VaultData } from '../shared/types';
+import { DEFAULT_SETTINGS, emptyVault, type Connection, type VaultData } from '../shared/types';
 import { mergeVaults, sameSyncedContent } from './merge';
 
 const conn = (id: string, updatedAt: number, extra: Partial<Connection> = {}): Connection => ({
@@ -58,9 +58,25 @@ describe('mergeVaults', () => {
     expect(mergeVaults(local, remote).knownHosts.map((h) => h.fingerprint)).toEqual(['new']);
   });
 
+  it('merges snippets and their deletions', () => {
+    const snip = (id: string, updatedAt: number, command = id) => ({ id, updatedAt, name: id, command, run: false });
+    const local = vault({ snippets: [snip('s1', 1), snip('s2', 1, 'old')] });
+    const remote = vault({ snippets: [snip('s2', 5, 'new'), snip('s3', 1)], tombstones: [{ id: 's1', updatedAt: 2 }] });
+    const m = mergeVaults(local, remote);
+    expect(m.snippets.map((s) => `${s.id}:${s.command}`).sort()).toEqual(['s2:new', 's3:s3']);
+    expect(sameSyncedContent(m, local)).toBe(false);
+  });
+
+  it('accepts a remote copy from an older version without snippets', () => {
+    const old = { ...vault({ connections: [conn('a', 1)] }) } as Partial<VaultData>;
+    delete old.snippets;
+    const m = mergeVaults(vault({ snippets: [{ id: 's', updatedAt: 1, name: 's', command: 'ls', run: true }] }), old as VaultData);
+    expect(m.snippets).toHaveLength(1);
+  });
+
   it('never takes settings or sync config from the remote copy', () => {
     const local = vault({ sync: { repo: 'me/local', token: 't1' } });
-    const remote = vault({ sync: { repo: 'me/remote', token: 't2' }, settings: { autoLockMinutes: 1, fontSize: 30, serverStats: false } });
+    const remote = vault({ sync: { repo: 'me/remote', token: 't2' }, settings: { ...DEFAULT_SETTINGS, fontSize: 30, theme: 'nord' } });
     const m = mergeVaults(local, remote);
     expect(m.sync?.repo).toBe('me/local');
     expect(m.settings).toEqual(local.settings);

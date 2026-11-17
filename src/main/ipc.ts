@@ -1,12 +1,16 @@
 import { randomUUID } from 'node:crypto';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
-import { BrowserWindow, dialog, ipcMain, net, powerMonitor } from 'electron';
+import { BrowserWindow, dialog, ipcMain, net, powerMonitor, shell } from 'electron';
 import { utils } from 'ssh2';
-import type { AppData, ConnectionSave, PickedKeyFile } from '../shared/api';
-import type { ConnectionInfo, KeyEntry, KeyInfo, Settings, VaultData, VaultState } from '../shared/types';
+import type { AppData, ConnectionSave, PickedKeyFile, SnippetSave } from '../shared/api';
+import { DEFAULT_SETTINGS, type ConnectionInfo, type ImportCandidate, type KeyEntry, type KeyInfo, type Settings, type VaultData, type VaultState } from '../shared/types';
 import { GitHubClient, normalizeRepo, type FetchFn } from './github';
+import { applyImports, scanImports, type ScanResult } from './importScan';
+import { SessionLogger } from './sessionLog';
 import { keyFingerprint, SessionManager } from './sessions';
+import { SftpManager } from './sftp';
+import { Updater } from './updates';
 import { SyncManager } from './sync';
 import { Vault, WrongPasswordError } from './vault';
 
@@ -48,9 +52,19 @@ export function registerIpc(vaultFile: string, getWindow: () => BrowserWindow | 
   // ---- host key prompts ------------------------------------------------
   const hostKeyWaiters = new Map<string, (trust: boolean) => void>();
 
+  const logger = new SessionLogger();
   const sessions = new SessionManager({
-    onData: (sid, data) => send('session:data', sid, data),
-    onStatus: (sid, status, message) => send('session:status', sid, status, message),
+    onData: (sid, data) => {
+      logger.write(sid, data);
+      send('session:data', sid, data);
+    },
+    onStatus: (sid, status, message, reason) => {
+      if (status === 'closed' || status === 'error') {
+        logger.end(sid, message);
+        sftp.drop(sid);
+      }
+      send('session:status', sid, status, message, reason);
+    },
     onInfo: (sid, info) => send('session:info', sid, info),
     serverStatsEnabled: () => vault.isUnlocked && vault.get().settings.serverStats,
     verifyHostKey: async (hostPort, fingerprint) => {
@@ -73,6 +87,20 @@ export function registerIpc(vaultFile: string, getWindow: () => BrowserWindow | 
     },
   });
 
+  const sftp = new SftpManager(
+    (sid) => sessions.getClient(sid),
+    (p) => send('sftp:progress', p),
+  );
+
+  // ---- updates ---------------------------------------------------------
+  // Remembered so update checks follow the setting while the vault is locked too.
+  let checkUpdates = true;
+  const updater = new Updater(
+    () => checkUpdates,
+    (info) => send('update:status', info),
+  );
+  updater.start();
+
   // ---- helpers ---------------------------------------------------------
   /** Picked-but-not-yet-saved key files, so key material never travels to the renderer. */
   const pendingKeys = new Map<string, string>();
@@ -91,6 +119,7 @@ export function registerIpc(vaultFile: string, getWindow: () => BrowserWindow | 
   const toAppData = (d: VaultData): AppData => ({
     connections: d.connections.map(({ password, ...c }): ConnectionInfo => ({ ...c, hasPassword: !!password })),
     keys: d.keys.map(keyInfo),
+    snippets: d.snippets,
     settings: d.settings,
     sync: d.sync ? { repo: d.sync.repo } : undefined,
   });
@@ -114,6 +143,7 @@ export function registerIpc(vaultFile: string, getWindow: () => BrowserWindow | 
   handle('vault:create', (pw: string) => vault.create(pw), false);
   handle('vault:unlock', async (pw: string) => {
     await vault.unlock(pw);
+    checkUpdates = vault.get().settings.checkUpdates;
     sync.start();
   }, false);
   handle('vault:lock', () => doLock(), false);
@@ -223,15 +253,77 @@ export function registerIpc(vaultFile: string, getWindow: () => BrowserWindow | 
     }),
   );
 
-  handle('settings:save', (s: Settings) =>
-    vault.update((d) => {
-      d.settings = {
-        autoLockMinutes: Math.max(0, Math.min(1440, Number(s.autoLockMinutes) || 0)),
-        fontSize: Math.max(8, Math.min(32, Number(s.fontSize) || 14)),
-        serverStats: s.serverStats !== false,
+  handle('snippet:save', async (input: SnippetSave) => {
+    const command = String(input.command ?? '').replace(/\r\n/g, '\n');
+    if (!command.trim()) throw new Error('The command is empty');
+    const id = input.id ?? randomUUID();
+    await vault.update((d) => {
+      const next = {
+        id,
+        updatedAt: Date.now(),
+        name: String(input.name ?? '').trim() || command.split('\n')[0].slice(0, 40),
+        command,
+        run: !!input.run,
       };
+      const existing = d.snippets.find((x) => x.id === id);
+      if (existing) Object.assign(existing, next);
+      else d.snippets.push(next);
+    });
+    return id;
+  });
+
+  // ---- import from ~/.ssh/config and PuTTY ------------------------------
+  let lastScan: ScanResult | null = null;
+  handle('import:scan', async (): Promise<ImportCandidate[]> => {
+    lastScan = await scanImports(vault.get());
+    return lastScan.candidates;
+  });
+  handle('import:apply', async (ids: string[], passphrases: Record<string, string>) => {
+    const scan = lastScan;
+    if (!scan) throw new Error('Scan again');
+    let result = { connections: 0, keys: 0 };
+    await vault.update((d) => {
+      result = applyImports(d, scan, ids, passphrases ?? {});
+    });
+    lastScan = null;
+    return result;
+  });
+
+  handle('snippet:delete', (id: string) =>
+    vault.update((d) => {
+      d.snippets = d.snippets.filter((x) => x.id !== id);
+      tombstone(d, id);
     }),
   );
+
+  handle('settings:save', (s: Partial<Settings>) =>
+    vault.update((d) => {
+      const cur = d.settings;
+      const str = (v: unknown, fallback: string, max = 300) => (typeof v === 'string' ? v.trim().slice(0, max) : fallback);
+      const bool = (v: unknown, fallback: boolean) => (typeof v === 'boolean' ? v : fallback);
+      d.settings = {
+        autoLockMinutes: Math.max(0, Math.min(1440, Number(s.autoLockMinutes ?? cur.autoLockMinutes) || 0)),
+        fontSize: Math.max(8, Math.min(32, Number(s.fontSize ?? cur.fontSize) || DEFAULT_SETTINGS.fontSize)),
+        serverStats: bool(s.serverStats, cur.serverStats),
+        theme: str(s.theme, cur.theme, 40) || DEFAULT_SETTINGS.theme,
+        fontFamily: str(s.fontFamily, cur.fontFamily),
+        autoReconnect: bool(s.autoReconnect, cur.autoReconnect),
+        logDir: str(s.logDir, cur.logDir, 1000),
+        checkUpdates: bool(s.checkUpdates, cur.checkUpdates),
+      };
+      checkUpdates = d.settings.checkUpdates;
+    }),
+  );
+
+  handle('settings:pickLogDir', async (): Promise<string | null> => {
+    const win = getWindow();
+    const opts = { title: 'Folder for session logs', properties: ['openDirectory' as const, 'createDirectory' as const] };
+    const res = win ? await dialog.showOpenDialog(win, opts) : await dialog.showOpenDialog(opts);
+    return res.canceled ? null : (res.filePaths[0] ?? null);
+  });
+
+  handle('update:get', () => updater.current, false);
+  handle('update:restart', () => updater.restart(), false);
 
   // ---- sync ------------------------------------------------------------
   handle('sync:status', () => sync.getStatus());
@@ -275,7 +367,47 @@ export function registerIpc(vaultFile: string, getWindow: () => BrowserWindow | 
     const conn = d.connections.find((c) => c.id === connectionId);
     if (!conn) throw new Error('Connection not found');
     const key = conn.keyId ? d.keys.find((k) => k.id === conn.keyId) : undefined;
-    return sessions.open(conn, key, cols, rows);
+    const sid = sessions.open(conn, key, cols, rows);
+    logger.start(sid, d.settings.logDir, conn.name, `${conn.username}@${conn.host}:${conn.port}`);
+    return sid;
+  });
+
+  // ---- SFTP ------------------------------------------------------------
+  handle('sftp:list', (sid: string, dir: string) => sftp.list(sid, dir));
+  handle('sftp:mkdir', (sid: string, p: string) => sftp.mkdir(sid, p));
+  handle('sftp:rename', (sid: string, from: string, to: string) => sftp.rename(sid, from, to));
+  handle('sftp:remove', (sid: string, p: string) => sftp.remove(sid, p));
+  handle('sftp:cancel', (id: string) => sftp.cancel(id));
+  handle('sftp:upload', (sid: string, localPaths: string[], remoteDir: string) =>
+    sftp.upload(sid, localPaths.filter((p) => typeof p === 'string' && path.isAbsolute(p)), remoteDir),
+  );
+  handle('sftp:uploadPick', async (sid: string, remoteDir: string) => {
+    const win = getWindow();
+    const opts = { title: 'Upload files', properties: ['openFile' as const, 'multiSelections' as const] };
+    const res = win ? await dialog.showOpenDialog(win, opts) : await dialog.showOpenDialog(opts);
+    if (res.canceled || res.filePaths.length === 0) return false;
+    await sftp.upload(sid, res.filePaths, remoteDir);
+    return true;
+  });
+  /** Ask where to save, then download. Returns the local path (for "Show in folder"), or null if cancelled. */
+  handle('sftp:download', async (sid: string, remotePaths: string[], isFile: boolean) => {
+    const win = getWindow();
+    if (remotePaths.length === 1 && isFile) {
+      const name = path.posix.basename(remotePaths[0]);
+      const opts = { title: 'Download', defaultPath: name };
+      const res = win ? await dialog.showSaveDialog(win, opts) : await dialog.showSaveDialog(opts);
+      if (res.canceled || !res.filePath) return null;
+      await sftp.download(sid, remotePaths, path.dirname(res.filePath), path.basename(res.filePath));
+      return res.filePath;
+    }
+    const opts = { title: 'Download to folder', properties: ['openDirectory' as const, 'createDirectory' as const] };
+    const res = win ? await dialog.showOpenDialog(win, opts) : await dialog.showOpenDialog(opts);
+    if (res.canceled || !res.filePaths[0]) return null;
+    await sftp.download(sid, remotePaths, res.filePaths[0]);
+    return remotePaths.length === 1 ? path.join(res.filePaths[0], path.posix.basename(remotePaths[0])) : res.filePaths[0];
+  });
+  handle('shell:showItem', (p: string) => {
+    if (typeof p === 'string' && path.isAbsolute(p)) shell.showItemInFolder(p);
   });
 
   ipcMain.on('session:write', (_e, sid: string, data: string) => {
@@ -294,7 +426,9 @@ export function registerIpc(vaultFile: string, getWindow: () => BrowserWindow | 
   return {
     shutdown() {
       sync.stop();
+      updater.stop();
       sessions.closeAll();
+      logger.endAll();
       vault.lock();
     },
   };
