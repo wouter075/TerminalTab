@@ -93,6 +93,8 @@ Good to know:
   them on restart; Linux shows a notice with a download link
 - Auto-lock after inactivity, on sleep and (Windows) on screen lock; open tabs keep running
   behind the lock screen but cannot receive input
+- **Rename and recolour tabs**: right-click a tab (or double-click its name). The
+  change is for that tab only; *Save as server name and colour* keeps it for the server
 - Right-click menu in the terminal: Copy, Paste, Select all, Find, Snippets, Files,
   Clear screen, Duplicate tab, Close tab (text fields get Cut / Copy / Paste)
 - Status bar for the visible tab: connection, key, connected time, latency,

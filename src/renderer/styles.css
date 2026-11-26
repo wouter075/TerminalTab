@@ -1220,3 +1220,35 @@ textarea {
 .update-check .link-btn {
   padding: 0;
 }
+
+/* ---- tab rename / colour ------------------------------------------------- */
+.tab-rename {
+  flex: 1;
+  min-width: 0;
+  padding: 1px 4px;
+  font: inherit;
+  height: auto;
+}
+.context-swatches {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+}
+.context-swatches-label {
+  color: var(--muted);
+  font-size: 12px;
+  margin-right: 2px;
+}
+.context-swatches .swatch {
+  width: 18px;
+  height: 18px;
+  min-width: 0;
+  padding: 0;
+  border-radius: 50%;
+  border: 2px solid var(--border);
+  cursor: pointer;
+}
+.context-swatches .swatch.selected {
+  border-color: var(--text);
+}

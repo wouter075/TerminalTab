@@ -1,8 +1,18 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 
 export type MenuItem =
-  | { separator: true }
-  | { separator?: false; label: string; shortcut?: string; disabled?: boolean; danger?: boolean; action(): void };
+  | { separator: true; swatches?: undefined }
+  | {
+      separator?: false;
+      swatches?: undefined;
+      label: string;
+      shortcut?: string;
+      disabled?: boolean;
+      danger?: boolean;
+      action(): void;
+    }
+  /** A row of colour buttons; '' = no colour. */
+  | { separator?: false; swatches: string[]; selected?: string; label?: string; onPick(color: string): void };
 
 interface Props {
   x: number;
@@ -53,6 +63,25 @@ export function ContextMenu({ x, y, items, onClose }: Props) {
       {items.map((item, i) =>
         item.separator ? (
           <div key={i} className="context-sep" />
+        ) : item.swatches ? (
+          <div key={i} className="context-swatches" role="group" aria-label={item.label ?? 'Colour'}>
+            {item.label && <span className="context-swatches-label">{item.label}</span>}
+            {item.swatches.map((c) => (
+              <button
+                key={c || 'none'}
+                role="menuitemradio"
+                aria-checked={item.selected === c}
+                className={`swatch ${item.selected === c ? 'selected' : ''}`}
+                style={{ background: c || 'transparent' }}
+                title={c || 'No colour'}
+                aria-label={c || 'No colour'}
+                onClick={() => {
+                  onClose();
+                  item.onPick(c);
+                }}
+              />
+            ))}
+          </div>
         ) : (
           <button
             key={i}

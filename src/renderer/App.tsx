@@ -13,8 +13,8 @@ import type {
   VaultState,
 } from '../shared/types';
 import { DEFAULT_SETTINGS, isLocalTarget, LOCAL_PREFIX, localShellId } from '../shared/types';
-import { ContextMenu } from './ContextMenu';
-import { ConnectionDialog } from './ConnectionDialog';
+import { ContextMenu, type MenuItem } from './ContextMenu';
+import { COLORS, ConnectionDialog } from './ConnectionDialog';
 import { Icon } from './Icon';
 import { ImportDialog } from './ImportDialog';
 import { KeysDialog } from './KeysDialog';
@@ -47,6 +47,9 @@ interface Tab {
   /** Automatic reconnect: when the next try happens, and how many tries so far. */
   retryAt?: number;
   retries?: number;
+  /** Name / colour set for this tab only (right-click a tab). color 'none' hides the server's colour. */
+  title?: string;
+  color?: string;
   /** SFTP side panel. */
   files?: boolean;
   filesPath?: string;
@@ -89,6 +92,8 @@ export function App() {
   const [now, setNow] = useState(Date.now());
   const [shells, setShells] = useState<LocalShell[]>([]);
   const [shellMenu, setShellMenu] = useState<{ x: number; y: number } | null>(null);
+  const [tabMenu, setTabMenu] = useState<{ id: string; x: number; y: number } | null>(null);
+  const [renamingId, setRenamingId] = useState<string | null>(null);
   const searchRef = useRef<HTMLInputElement>(null);
   const settingsRef = useRef(data.settings);
   settingsRef.current = data.settings;
@@ -147,10 +152,13 @@ export function App() {
   const connById = useMemo(() => new Map(data.connections.map((c) => [c.id, c])), [data.connections]);
   const shellById = useMemo(() => new Map(shells.map((s) => [s.id, s])), [shells]);
   const defaultShell = shellById.get(data.settings.defaultShell) ?? shells[0];
-  const tabTitle = (t: Tab) =>
+  const defaultTitle = (t: Tab) =>
     isLocalTarget(t.connectionId)
       ? (shellById.get(localShellId(t.connectionId))?.name ?? 'Local shell')
       : (connById.get(t.connectionId)?.name ?? 'Deleted server');
+  const tabTitle = (t: Tab) => t.title ?? defaultTitle(t);
+  /** Colour shown on the tab: its own, else the server's ('' = none). */
+  const tabColor = (t: Tab) => (t.color === 'none' ? '' : (t.color ?? connById.get(t.connectionId)?.color ?? ''));
   const openCounts = useMemo(() => {
     const m = new Map<string, number>();
     for (const t of tabs) m.set(t.connectionId, (m.get(t.connectionId) ?? 0) + 1);
@@ -288,6 +296,75 @@ export function App() {
     setHostPrompts(rest);
   };
 
+  // The input's blur fires after Enter / Esc too; only the first ending counts.
+  const renameDone = useRef(false);
+  const lastRenamed = useRef<string | null>(null);
+  useEffect(() => {
+    renameDone.current = false;
+    if (renamingId) lastRenamed.current = renamingId;
+    else if (lastRenamed.current) {
+      // Back to the terminal once the input is gone (focusing earlier loses it to <body>).
+      const id = lastRenamed.current;
+      lastRenamed.current = null;
+      setTimeout(() => panes.get(id)?.focus(), 0);
+    }
+  }, [renamingId]);
+  const finishRename = (id: string, value: string | null) => {
+    if (renameDone.current) return;
+    renameDone.current = true;
+    setRenamingId(null);
+    if (value !== null) {
+      const name = value.trim();
+      setTabs((ts) =>
+        ts.map((t) => (t.id === id ? { ...t, title: name && name !== defaultTitle(t) ? name : undefined } : t)),
+      );
+    }
+  };
+
+  /** Keep this tab's name and colour on the saved server (synced to other PCs too). */
+  const saveTabToServer = async (t: Tab) => {
+    const c = connById.get(t.connectionId);
+    if (!c) return;
+    await api.saveConnection({
+      id: c.id,
+      name: t.title ?? c.name,
+      host: c.host,
+      port: c.port,
+      username: c.username,
+      keyId: c.keyId,
+      group: c.group,
+      color: t.color === undefined ? c.color : t.color === 'none' ? '' : t.color,
+    });
+    setTabs((ts) => ts.map((x) => (x.connectionId === c.id ? { ...x, title: undefined, color: undefined } : x)));
+    await refresh();
+  };
+
+  const tabMenuItems = (t: Tab): MenuItem[] => {
+    const local = isLocalTarget(t.connectionId);
+    const custom = t.title !== undefined || t.color !== undefined;
+    const conn = connById.get(t.connectionId);
+    return [
+      { label: 'Rename tab…', shortcut: 'Double-click', action: () => setRenamingId(t.id) },
+      {
+        swatches: COLORS,
+        selected: tabColor(t),
+        label: 'Colour',
+        onPick: (color) => patchTab(t.id, { color: color === (conn?.color ?? '') ? undefined : color || 'none' }),
+      },
+      ...(custom
+        ? [
+            { label: 'Reset name and colour', action: () => patchTab(t.id, { title: undefined, color: undefined }) },
+            ...(!local && conn
+              ? [{ label: 'Save as server name and colour', action: () => void saveTabToServer(t) }]
+              : []),
+          ]
+        : []),
+      { separator: true },
+      { label: 'Duplicate tab', action: () => connect(t.connectionId) },
+      { label: 'Close tab', shortcut: 'Ctrl+W', danger: true, action: () => closeTab(t.id) },
+    ];
+  };
+
   const closePalette = useCallback(() => {
     setPalette(null);
     if (activeId) requestAnimationFrame(() => panes.get(activeId)?.focus());
@@ -326,20 +403,27 @@ export function App() {
             <div className="tabbar">
               <div className="tabs">
                 {tabs.map((t) => {
-                  const c = connById.get(t.connectionId);
                   const local = isLocalTarget(t.connectionId);
+                  const color = tabColor(t);
                   return (
                     <div
                       key={t.id}
                       className={`tab ${t.id === activeId ? 'active' : ''}`}
-                      style={{ borderTopColor: c?.color || undefined }}
+                      style={{ borderTopColor: color || undefined }}
                       onMouseDown={(e) => {
+                        if (renamingId === t.id) return;
                         if (e.button === 1) {
                           e.preventDefault();
                           closeTab(t.id);
                         } else setActiveId(t.id);
                       }}
-                      title={t.message}
+                      onContextMenu={(e) => {
+                        e.preventDefault();
+                        setActiveId(t.id);
+                        setTabMenu({ id: t.id, x: e.clientX, y: e.clientY });
+                      }}
+                      onDoubleClick={() => setRenamingId(t.id)}
+                      title={t.title ? `${t.title} — ${defaultTitle(t)}${t.message ? `\n${t.message}` : ''}` : t.message}
                     >
                       <span className={`status-dot ${t.retryAt ? 'connecting' : t.status}`} />
                       {local && (
@@ -347,7 +431,24 @@ export function App() {
                           <Icon name="prompt" />
                         </span>
                       )}
-                      <span className="tab-title">{tabTitle(t)}</span>
+                      {renamingId === t.id ? (
+                        <input
+                          className="tab-rename"
+                          autoFocus
+                          defaultValue={tabTitle(t)}
+                          aria-label="Tab name"
+                          onFocus={(e) => e.target.select()}
+                          onMouseDown={(e) => e.stopPropagation()}
+                          onKeyDown={(e) => {
+                            e.stopPropagation();
+                            if (e.key === 'Enter') finishRename(t.id, e.currentTarget.value);
+                            else if (e.key === 'Escape') finishRename(t.id, null);
+                          }}
+                          onBlur={(e) => finishRename(t.id, e.currentTarget.value)}
+                        />
+                      ) : (
+                        <span className="tab-title">{tabTitle(t)}</span>
+                      )}
                       <button
                         className="tab-close"
                         onMouseDown={(e) => e.stopPropagation()}
@@ -372,6 +473,14 @@ export function App() {
                   </button>
                 )}
               </div>
+              {tabMenu && tabs.some((t) => t.id === tabMenu.id) && (
+                <ContextMenu
+                  x={tabMenu.x}
+                  y={tabMenu.y}
+                  onClose={() => setTabMenu(null)}
+                  items={tabMenuItems(tabs.find((t) => t.id === tabMenu.id)!)}
+                />
+              )}
               {shellMenu && (
                 <ContextMenu
                   x={shellMenu.x}
