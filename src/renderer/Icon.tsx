@@ -24,6 +24,7 @@ const PATHS = {
   files: 'M3 6.5V18a1 1 0 0 0 1 1h16a1 1 0 0 0 1-1V8.5a1 1 0 0 0-1-1h-8l-2-2.5H4a1 1 0 0 0-1 1.5zM7 12h10M7 15h6',
   import: 'M12 3v11M7 9l5 5 5-5M5 15v4a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-4',
   close: 'M6 6l12 12M18 6L6 18',
+  prompt: 'M4 5h16v14H4zM7.5 9.5l3 2.5-3 2.5M12.5 15h4',
 } as const;
 
 export type IconName = keyof typeof PATHS;

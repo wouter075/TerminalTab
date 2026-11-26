@@ -57,7 +57,7 @@ export class Updater {
       });
       autoUpdater.on('error', () => undefined); // offline, proxy, etc.: try again next time
       autoUpdater.on('update-downloaded', (_e, _notes, releaseName) => {
-        this.set({ state: 'downloaded', version: String(releaseName || '').replace(/^TerminalTab\s*/i, '') || undefined, url: RELEASES_URL });
+        this.set({ state: 'downloaded', version: String(releaseName || '').replace(/^(TerminalTab\s*)?v(?=\d)/i, '').replace(/^TerminalTab\s*/i, '') || undefined, url: RELEASES_URL });
       });
       this.squirrelReady = true;
     } catch {

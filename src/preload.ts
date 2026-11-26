@@ -40,6 +40,8 @@ const api: TerminalTabApi = {
   closeSession: (sid) => ipcRenderer.send('session:close', sid),
   watchSession: (sid) => ipcRenderer.send('session:watch', sid),
   answerHostKey: (rid, trust) => ipcRenderer.send('hostkey:answer', rid, trust),
+  localShells: (fresh) => ipcRenderer.invoke('local:list', fresh),
+  openLocal: (shellId, cols, rows) => ipcRenderer.invoke('local:open', shellId, cols, rows),
 
   sftpList: (sid, dir) => ipcRenderer.invoke('sftp:list', sid, dir),
   sftpMkdir: (sid, p) => ipcRenderer.invoke('sftp:mkdir', sid, p),

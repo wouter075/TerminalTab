@@ -1,3 +1,4 @@
+import { cpSync, existsSync, mkdirSync, readdirSync } from 'node:fs';
 import path from 'node:path';
 import type { ForgeConfig } from '@electron-forge/shared-types';
 import { MakerSquirrel } from '@electron-forge/maker-squirrel';
@@ -19,6 +20,36 @@ const linuxOptions = {
   homepage: 'https://github.com/wouter075/TerminalTab',
 };
 
+/**
+ * node-pty (local shells) is a native module that Vite can't bundle. Copy just what it needs at
+ * runtime next to app.asar (resources/node-pty), outside the archive, so its .node files,
+ * conpty.dll / OpenConsole.exe and worker script load from real paths. main loads it from there.
+ */
+function copyNodePty(buildPath: string, platform: string, arch: string) {
+  const src = path.resolve('node_modules/node-pty');
+  const dest = path.join(buildPath, '..', 'node-pty');
+  const copy = (rel: string, filter?: (file: string) => boolean) => {
+    const from = path.join(src, rel);
+    if (!existsSync(from)) return;
+    cpSync(from, path.join(dest, rel), { recursive: true, filter: filter && ((f) => filter(f)) });
+  };
+  mkdirSync(dest, { recursive: true });
+  copy('package.json');
+  copy('lib', (f) => !/\.(test\.js|map)$/.test(f));
+  copy(`prebuilds/${platform}-${arch}`, (f) => !f.endsWith('.pdb'));
+  // Built from source where there's no prebuild (Linux).
+  const release = path.join(src, 'build', 'Release');
+  if (existsSync(release)) {
+    for (const f of readdirSync(release)) {
+      if (f.endsWith('.node') || f === 'spawn-helper') copy(`build/Release/${f}`);
+    }
+  }
+  const hasNative =
+    existsSync(path.join(dest, 'build', 'Release', 'pty.node')) ||
+    existsSync(path.join(dest, 'prebuilds', `${platform}-${arch}`, platform === 'win32' ? 'conpty.node' : 'pty.node'));
+  if (!hasNative) throw new Error(`node-pty has no native binary for ${platform}-${arch}; run npm ci with a C++ toolchain`);
+}
+
 const config: ForgeConfig = {
   packagerConfig: {
     asar: true,
@@ -27,7 +58,11 @@ const config: ForgeConfig = {
     icon: 'assets/icon', // .ico on Windows
     extraResource: ['assets/icon.png'], // window icon on Linux
   },
-  rebuildConfig: {},
+  // node-pty is N-API (no rebuild per Electron version needed) and ships outside app.asar.
+  rebuildConfig: { onlyModules: [] },
+  hooks: {
+    packageAfterCopy: async (_config, buildPath, _electronVersion, platform, arch) => copyNodePty(buildPath, platform, arch),
+  },
   makers: [
     new MakerSquirrel({
       name: 'TerminalTab',

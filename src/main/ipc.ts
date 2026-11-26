@@ -8,6 +8,7 @@ import { DEFAULT_SETTINGS, type ConnectionInfo, type ImportCandidate, type KeyEn
 import { GitHubClient, normalizeRepo, type FetchFn } from './github';
 import { applyImports, scanImports, type ScanResult } from './importScan';
 import { SessionLogger } from './sessionLog';
+import { LocalShellManager } from './localShells';
 import { keyFingerprint, SessionManager } from './sessions';
 import { SftpManager } from './sftp';
 import { Updater } from './updates';
@@ -85,6 +86,19 @@ export function registerIpc(vaultFile: string, getWindow: () => BrowserWindow | 
       }
       return trust;
     },
+  });
+
+  // Local shells share the session events (and session logs) with SSH tabs.
+  const local = new LocalShellManager({
+    onData: (sid, data) => {
+      logger.write(sid, data);
+      send('session:data', sid, data);
+    },
+    onStatus: (sid, status, message, reason) => {
+      if (status === 'closed' || status === 'error') logger.end(sid, message);
+      send('session:status', sid, status, message, reason);
+    },
+    onInfo: (sid, info) => send('session:info', sid, info),
   });
 
   const sftp = new SftpManager(
@@ -310,6 +324,7 @@ export function registerIpc(vaultFile: string, getWindow: () => BrowserWindow | 
         autoReconnect: bool(s.autoReconnect, cur.autoReconnect),
         logDir: str(s.logDir, cur.logDir, 1000),
         checkUpdates: bool(s.checkUpdates, cur.checkUpdates),
+        defaultShell: str(s.defaultShell, cur.defaultShell, 300),
       };
       checkUpdates = d.settings.checkUpdates;
     }),
@@ -372,6 +387,13 @@ export function registerIpc(vaultFile: string, getWindow: () => BrowserWindow | 
     return sid;
   });
 
+  handle('local:list', (fresh?: boolean) => local.list(!!fresh));
+  handle('local:open', async (shellId: string, cols: number, rows: number) => {
+    const { sessionId, shell } = await local.open(String(shellId), Number(cols) || 80, Number(rows) || 24);
+    logger.start(sessionId, vault.get().settings.logDir, `Local - ${shell.name}`, `${shell.name} on this PC`);
+    return sessionId;
+  });
+
   // ---- SFTP ------------------------------------------------------------
   handle('sftp:list', (sid: string, dir: string) => sftp.list(sid, dir));
   handle('sftp:mkdir', (sid: string, p: string) => sftp.mkdir(sid, p));
@@ -412,12 +434,19 @@ export function registerIpc(vaultFile: string, getWindow: () => BrowserWindow | 
 
   ipcMain.on('session:write', (_e, sid: string, data: string) => {
     if (!vault.isUnlocked) return; // no typing into sessions behind the lock screen
-    sessions.write(sid, data);
+    if (local.has(sid)) local.write(sid, data);
+    else sessions.write(sid, data);
     touch();
   });
-  ipcMain.on('session:resize', (_e, sid: string, cols: number, rows: number) => sessions.resize(sid, cols, rows));
-  ipcMain.on('session:close', (_e, sid: string) => sessions.close(sid));
-  ipcMain.on('session:watch', (_e, sid: string | null) => sessions.watch(sid));
+  ipcMain.on('session:resize', (_e, sid: string, cols: number, rows: number) =>
+    local.has(sid) ? local.resize(sid, cols, rows) : sessions.resize(sid, cols, rows),
+  );
+  ipcMain.on('session:close', (_e, sid: string) => (local.has(sid) ? local.close(sid) : sessions.close(sid)));
+  ipcMain.on('session:watch', (_e, sid: string | null) => {
+    const isLocal = !!sid && local.has(sid);
+    sessions.watch(isLocal ? null : sid);
+    local.watch(isLocal ? sid : null);
+  });
   ipcMain.on('hostkey:answer', (_e, requestId: string, trust: boolean) => {
     hostKeyWaiters.get(requestId)?.(trust);
     hostKeyWaiters.delete(requestId);
@@ -428,6 +457,7 @@ export function registerIpc(vaultFile: string, getWindow: () => BrowserWindow | 
       sync.stop();
       updater.stop();
       sessions.closeAll();
+      local.closeAll();
       logger.endAll();
       vault.lock();
     },

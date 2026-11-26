@@ -4,6 +4,7 @@ import type {
   ConnectionInfo,
   EndReason,
   HostKeyPrompt,
+  LocalShell,
   SessionInfo,
   SessionStatus,
   SyncStatus,
@@ -11,7 +12,8 @@ import type {
   UpdateInfo,
   VaultState,
 } from '../shared/types';
-import { DEFAULT_SETTINGS } from '../shared/types';
+import { DEFAULT_SETTINGS, isLocalTarget, LOCAL_PREFIX, localShellId } from '../shared/types';
+import { ContextMenu } from './ContextMenu';
 import { ConnectionDialog } from './ConnectionDialog';
 import { Icon } from './Icon';
 import { ImportDialog } from './ImportDialog';
@@ -31,6 +33,7 @@ import { api } from './util';
 
 interface Tab {
   id: string;
+  /** Connection id, or `local:<shell id>` for a shell on this PC. */
   connectionId: string;
   attempt: number;
   status: SessionStatus;
@@ -84,6 +87,8 @@ export function App() {
   const [update, setUpdate] = useState<UpdateInfo>({ state: 'none' });
   const [sftpWidth, setSftpWidth] = useState(loadSftpWidth);
   const [now, setNow] = useState(Date.now());
+  const [shells, setShells] = useState<LocalShell[]>([]);
+  const [shellMenu, setShellMenu] = useState<{ x: number; y: number } | null>(null);
   const searchRef = useRef<HTMLInputElement>(null);
   const settingsRef = useRef(data.settings);
   settingsRef.current = data.settings;
@@ -126,6 +131,11 @@ export function App() {
     return () => offs.forEach((off) => off());
   }, [refresh]);
 
+  // Shells on this PC (detected once in the main process).
+  useEffect(() => {
+    if (vaultState === 'unlocked') api.localShells().then(setShells, () => undefined);
+  }, [vaultState]);
+
   useEffect(() => {
     try {
       localStorage.setItem(SFTP_WIDTH_KEY, String(sftpWidth));
@@ -135,6 +145,12 @@ export function App() {
   }, [sftpWidth]);
 
   const connById = useMemo(() => new Map(data.connections.map((c) => [c.id, c])), [data.connections]);
+  const shellById = useMemo(() => new Map(shells.map((s) => [s.id, s])), [shells]);
+  const defaultShell = shellById.get(data.settings.defaultShell) ?? shells[0];
+  const tabTitle = (t: Tab) =>
+    isLocalTarget(t.connectionId)
+      ? (shellById.get(localShellId(t.connectionId))?.name ?? 'Local shell')
+      : (connById.get(t.connectionId)?.name ?? 'Deleted server');
   const openCounts = useMemo(() => {
     const m = new Map<string, number>();
     for (const t of tabs) m.set(t.connectionId, (m.get(t.connectionId) ?? 0) + 1);
@@ -155,6 +171,8 @@ export function App() {
       return next;
     });
   }, []);
+
+  const openShell = useCallback((shellId: string) => connect(LOCAL_PREFIX + shellId), [connect]);
 
   const patchTab = useCallback(
     (id: string, patch: Partial<Tab>) => setTabs((ts) => ts.map((t) => (t.id === id ? { ...t, ...patch } : t))),
@@ -225,7 +243,9 @@ export function App() {
     (id?: string | null) => {
       const tabId = id ?? activeId;
       if (!tabId) return;
-      setTabs((ts) => ts.map((t) => (t.id === tabId ? { ...t, files: !t.files } : t)));
+      setTabs((ts) =>
+        ts.map((t) => (t.id === tabId && !isLocalTarget(t.connectionId) ? { ...t, files: !t.files } : t)),
+      );
     },
     [activeId],
   );
@@ -240,6 +260,9 @@ export function App() {
       } else if (e.shiftKey && e.code === 'KeyE') {
         e.preventDefault();
         toggleFiles();
+      } else if (e.shiftKey && e.code === 'KeyT') {
+        e.preventDefault();
+        if (defaultShell) openShell(defaultShell.id);
       } else if (e.code === 'KeyT') {
         e.preventDefault();
         searchRef.current?.focus();
@@ -256,7 +279,7 @@ export function App() {
     };
     window.addEventListener('keydown', onKey, true);
     return () => window.removeEventListener('keydown', onKey, true);
-  }, [vaultState, activeId, tabs, closeTab, toggleFiles]);
+  }, [vaultState, activeId, tabs, closeTab, toggleFiles, defaultShell, openShell]);
 
   const answerHost = (trust: boolean) => {
     const [p, ...rest] = hostPrompts;
@@ -275,6 +298,8 @@ export function App() {
   const prompt = hostPrompts[0];
   const activeConnected = !!activeTab?.sessionId && activeTab.status === 'connected';
   const activeTransfers = [...transfers.values()].filter((t) => t.sessionId === activeTab?.sessionId);
+  const activeIsLocal = !!activeTab && isLocalTarget(activeTab.connectionId);
+  const activeLocal = activeIsLocal ? shellById.get(localShellId(activeTab.connectionId)) : undefined;
 
   return (
     <>
@@ -283,8 +308,10 @@ export function App() {
           <Sidebar
             ref={searchRef}
             connections={data.connections}
+            shells={shells}
             openCounts={openCounts}
             onConnect={connect}
+            onOpenShell={openShell}
             onEdit={(c) => setDialog({ kind: 'conn', connection: c })}
             onAdd={() => setDialog({ kind: 'conn' })}
             onImport={() => setDialog({ kind: 'import' })}
@@ -300,6 +327,7 @@ export function App() {
               <div className="tabs">
                 {tabs.map((t) => {
                   const c = connById.get(t.connectionId);
+                  const local = isLocalTarget(t.connectionId);
                   return (
                     <div
                       key={t.id}
@@ -314,7 +342,12 @@ export function App() {
                       title={t.message}
                     >
                       <span className={`status-dot ${t.retryAt ? 'connecting' : t.status}`} />
-                      <span className="tab-title">{c?.name ?? 'Deleted server'}</span>
+                      {local && (
+                        <span className="tab-kind" title="Shell on this PC">
+                          <Icon name="prompt" />
+                        </span>
+                      )}
+                      <span className="tab-title">{tabTitle(t)}</span>
                       <button
                         className="tab-close"
                         onMouseDown={(e) => e.stopPropagation()}
@@ -326,7 +359,31 @@ export function App() {
                     </div>
                   );
                 })}
+                {shells.length > 0 && (
+                  <button
+                    className="icon-btn new-shell"
+                    title={`New local shell${defaultShell ? ` (Ctrl+Shift+T opens ${defaultShell.name})` : ''}`}
+                    onClick={(e) => {
+                      const r = e.currentTarget.getBoundingClientRect();
+                      setShellMenu({ x: r.left, y: r.bottom + 4 });
+                    }}
+                  >
+                    <Icon name="plus" />
+                  </button>
+                )}
               </div>
+              {shellMenu && (
+                <ContextMenu
+                  x={shellMenu.x}
+                  y={shellMenu.y}
+                  onClose={() => setShellMenu(null)}
+                  items={shells.map((sh) => ({
+                    label: sh.name,
+                    shortcut: sh.id === defaultShell?.id ? 'Ctrl+Shift+T' : undefined,
+                    action: () => openShell(sh.id),
+                  }))}
+                />
+              )}
               {activeTab && (
                 <div className="tabbar-actions">
                   <button
@@ -336,13 +393,15 @@ export function App() {
                   >
                     <Icon name="snippet" />
                   </button>
-                  <button
-                    className={`icon-btn ${activeTab.files ? 'on' : ''}`}
-                    title="Files — SFTP (Ctrl+Shift+E)"
-                    onClick={() => toggleFiles()}
-                  >
-                    <Icon name="files" />
-                  </button>
+                  {!activeIsLocal && (
+                    <button
+                      className={`icon-btn ${activeTab.files ? 'on' : ''}`}
+                      title="Files — SFTP (Ctrl+Shift+E)"
+                      onClick={() => toggleFiles()}
+                    >
+                      <Icon name="files" />
+                    </button>
+                  )}
                 </div>
               )}
             </div>
@@ -379,7 +438,7 @@ export function App() {
                         : (activeTab.message ?? 'Disconnected')}
                     </span>
                     <button className="primary" onClick={() => reconnect(activeTab.id)}>
-                      {activeTab.retryAt ? 'Now' : 'Reconnect'}
+                      {activeTab.retryAt ? 'Now' : activeIsLocal ? 'Restart' : 'Reconnect'}
                     </button>
                     {activeTab.retryAt ? (
                       <button onClick={() => patchTab(activeTab.id, { retryAt: undefined })}>Cancel</button>
@@ -392,8 +451,15 @@ export function App() {
                   <div className="empty-state">
                     <Logo size={88} text={false} />
                     <p>Pick a server on the left to open it in a new tab.</p>
+                    {defaultShell && (
+                      <p>
+                        <button onClick={() => openShell(defaultShell.id)}>
+                          <Icon name="prompt" /> Open {defaultShell.name}
+                        </button>
+                      </p>
+                    )}
                     <p className="muted small">
-                      Ctrl+T search · Ctrl+W close tab · Ctrl+Tab next tab · Ctrl+F find · Ctrl+Shift+P snippets ·
+                      Ctrl+T search · Ctrl+Shift+T local shell · Ctrl+W close tab · Ctrl+Tab next tab · Ctrl+F find · Ctrl+Shift+P snippets ·
                       Ctrl+Shift+E files · select to copy · right-click for more
                     </p>
                   </div>
@@ -415,6 +481,7 @@ export function App() {
             </div>
             {activeTab && (
               <StatusBar
+                local={activeIsLocal ? (activeLocal?.name ?? 'Local shell') : undefined}
                 connection={connById.get(activeTab.connectionId)}
                 keyInfo={data.keys.find((k) => k.id === connById.get(activeTab.connectionId)?.keyId)}
                 status={activeTab.status}
@@ -439,6 +506,8 @@ export function App() {
         <Palette
           snippets={data.snippets}
           connections={data.connections}
+          shells={shells}
+          onShell={openShell}
           canInsert={activeConnected}
           snippetsOnly={palette.snippetsOnly}
           onSnippet={(s) => activeId && panes.get(activeId)?.insert(s.command, s.run)}
@@ -475,7 +544,10 @@ export function App() {
           syncRepo={data.sync?.repo}
           syncStatus={syncStatus}
           onClose={() => setDialog(null)}
-          onChanged={refresh}
+          onChanged={() => {
+            refresh();
+            api.localShells().then(setShells, () => undefined);
+          }}
         />
       )}
 

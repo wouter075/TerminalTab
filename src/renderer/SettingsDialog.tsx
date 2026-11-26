@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import type { Settings, SyncStatus } from '../shared/types';
+import { useEffect, useState } from 'react';
+import type { LocalShell, Settings, SyncStatus } from '../shared/types';
 import { Modal } from './Modal';
 import { FONT_SUGGESTIONS, THEMES } from './themes';
 import { SyncSection } from './SyncSection';
@@ -22,6 +22,12 @@ export function SettingsDialog({ settings, syncRepo, syncStatus, onClose, onChan
   const [autoReconnect, setAutoReconnect] = useState(settings.autoReconnect);
   const [logDir, setLogDir] = useState(settings.logDir);
   const [checkUpdates, setCheckUpdates] = useState(settings.checkUpdates);
+  const [defaultShell, setDefaultShell] = useState(settings.defaultShell);
+  const [shells, setShells] = useState<LocalShell[]>([]);
+  const [scanning, setScanning] = useState(false);
+  useEffect(() => {
+    api.localShells().then(setShells, () => undefined);
+  }, []);
   const [oldPw, setOldPw] = useState('');
   const [newPw, setNewPw] = useState('');
   const [newPw2, setNewPw2] = useState('');
@@ -37,6 +43,7 @@ export function SettingsDialog({ settings, syncRepo, syncStatus, onClose, onChan
       autoReconnect,
       logDir,
       checkUpdates,
+      defaultShell,
     });
     onChanged();
     onClose();
@@ -161,6 +168,45 @@ export function SettingsDialog({ settings, syncRepo, syncStatus, onClose, onChan
           <span className="muted small">
             Saves everything shown in each tab as a text file per server. Logs are <b>not encrypted</b> and can contain
             sensitive output.
+          </span>
+        </div>
+
+        <h3>Local shells</h3>
+        <div className="form-field">
+          <span>Default shell</span>
+          <div className="row">
+            <select
+              className="grow"
+              value={shells.some((s) => s.id === defaultShell) ? defaultShell : ''}
+              onChange={(e) => setDefaultShell(e.target.value)}
+            >
+              <option value="">{shells[0] ? `${shells[0].name} (first found)` : 'None found'}</option>
+              {shells.map((s) => (
+                <option key={s.id} value={s.id}>
+                  {s.name}
+                </option>
+              ))}
+            </select>
+            <button
+              type="button"
+              disabled={scanning}
+              title="Look for shells again, e.g. after installing PowerShell 7 or a WSL distro"
+              onClick={async () => {
+                setScanning(true);
+                try {
+                  setShells(await api.localShells(true));
+                  onChanged();
+                } finally {
+                  setScanning(false);
+                }
+              }}
+            >
+              {scanning ? 'Looking…' : 'Find shells again'}
+            </button>
+          </div>
+          <span className="muted small">
+            Opened by Ctrl+Shift+T and listed under <i>This PC</i>. Local shells don't use the vault, but like SSH tabs
+            they can't be typed into while TerminalTab is locked.
           </span>
         </div>
 

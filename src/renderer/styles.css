@@ -1167,3 +1167,47 @@ textarea {
   text-align: right;
   color: var(--muted);
 }
+
+/* ---- local shells ------------------------------------------------------- */
+.group-toggle {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  width: 100%;
+  background: transparent;
+  border: none;
+  text-align: left;
+  cursor: pointer;
+}
+.group-toggle:hover {
+  color: var(--text);
+}
+.chevron {
+  display: inline-block;
+  width: 10px;
+  transition: transform 0.12s;
+}
+.chevron.open {
+  transform: rotate(90deg);
+}
+.conn.shell {
+  padding-top: 4px;
+  padding-bottom: 4px;
+}
+.conn-icon {
+  width: 16px;
+  display: inline-flex;
+  justify-content: center;
+  color: var(--muted);
+  flex-shrink: 0;
+}
+.tab-kind {
+  display: inline-flex;
+  color: var(--muted);
+  margin-right: -2px;
+}
+.new-shell {
+  align-self: center;
+  margin: 0 4px;
+  flex-shrink: 0;
+}

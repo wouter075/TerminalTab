@@ -1,15 +1,18 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import type { ConnectionInfo, Snippet } from '../shared/types';
+import type { ConnectionInfo, LocalShell, Snippet } from '../shared/types';
 import { Icon } from './Icon';
 
 type Item =
   | { kind: 'snippet'; id: string; title: string; sub: string; snippet: Snippet }
   | { kind: 'server'; id: string; title: string; sub: string; conn: ConnectionInfo }
+  | { kind: 'shell'; id: string; title: string; sub: string }
   | { kind: 'action'; id: string; title: string; sub: string; run(): void };
 
 interface Props {
   snippets: Snippet[];
   connections: ConnectionInfo[];
+  shells: LocalShell[];
+  onShell(id: string): void;
   /** A connected tab is active, so snippets can be inserted. */
   canInsert: boolean;
   /** Start in snippets-only mode (from the terminal's right-click menu). */
@@ -44,7 +47,18 @@ const firstLine = (s: string) => {
 };
 
 /** Ctrl+Shift+P: insert a snippet into the active tab, or open a server. */
-export function Palette({ snippets, connections, canInsert, snippetsOnly, onSnippet, onServer, onManageSnippets, onClose }: Props) {
+export function Palette({
+  snippets,
+  connections,
+  shells,
+  onShell,
+  canInsert,
+  snippetsOnly,
+  onSnippet,
+  onServer,
+  onManageSnippets,
+  onClose,
+}: Props) {
   const [query, setQuery] = useState('');
   const [sel, setSel] = useState(0);
   const listRef = useRef<HTMLDivElement>(null);
@@ -57,6 +71,9 @@ export function Palette({ snippets, connections, canInsert, snippetsOnly, onSnip
         : connections.map(
             (c): Item => ({ kind: 'server', id: c.id, title: c.name, sub: `${c.username}@${c.host}`, conn: c }),
           )),
+      ...(snippetsOnly
+        ? []
+        : shells.map((sh): Item => ({ kind: 'shell', id: sh.id, title: sh.name, sub: 'Local shell on this PC' }))),
       { kind: 'action', id: 'manage', title: 'Manage snippets…', sub: 'Add, edit or delete snippets', run: onManageSnippets },
     ];
     if (!query.trim()) return all;
@@ -65,7 +82,7 @@ export function Palette({ snippets, connections, canInsert, snippetsOnly, onSnip
       .filter((x) => x.score >= 0)
       .sort((a, b) => b.score - a.score)
       .map((x) => x.it);
-  }, [snippets, connections, snippetsOnly, query, onManageSnippets]);
+  }, [snippets, connections, shells, snippetsOnly, query, onManageSnippets]);
 
   useEffect(() => setSel(0), [query]);
   useEffect(() => {
@@ -78,6 +95,7 @@ export function Palette({ snippets, connections, canInsert, snippetsOnly, onSnip
     onClose();
     if (it.kind === 'snippet') onSnippet(it.snippet);
     else if (it.kind === 'server') onServer(it.id);
+    else if (it.kind === 'shell') onShell(it.id);
     else it.run();
   };
 
@@ -87,7 +105,7 @@ export function Palette({ snippets, connections, canInsert, snippetsOnly, onSnip
         <input
           autoFocus
           className="palette-input"
-          placeholder={snippetsOnly ? 'Search snippets…' : 'Search snippets and servers…'}
+          placeholder={snippetsOnly ? 'Search snippets…' : 'Search snippets, servers and shells…'}
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           onKeyDown={(e) => {
@@ -118,7 +136,11 @@ export function Palette({ snippets, connections, canInsert, snippetsOnly, onSnip
                 title={it.kind === 'snippet' ? it.snippet.command : undefined}
               >
                 <span className="palette-icon">
-                  <Icon name={it.kind === 'snippet' ? 'snippet' : it.kind === 'server' ? 'server' : 'gear'} />
+                  <Icon
+                    name={
+                      it.kind === 'snippet' ? 'snippet' : it.kind === 'server' ? 'server' : it.kind === 'shell' ? 'prompt' : 'gear'
+                    }
+                  />
                 </span>
                 <span className="palette-text">
                   <span className="palette-title">{it.title}</span>
@@ -131,7 +153,7 @@ export function Palette({ snippets, connections, canInsert, snippetsOnly, onSnip
                       : it.snippet.run
                         ? 'run'
                         : 'insert'
-                    : it.kind === 'server'
+                    : it.kind === 'server' || it.kind === 'shell'
                       ? 'open'
                       : ''}
                 </span>

@@ -52,6 +52,8 @@ export interface Settings {
   logDir: string;
   /** Look for new versions on GitHub. */
   checkUpdates: boolean;
+  /** Local shell opened by Ctrl+Shift+T / the tab bar's + button (LocalShell id); empty = the first one found. */
+  defaultShell: string;
 }
 
 /** GitHub sync configuration. Device-local: never merged from the remote copy. */
@@ -128,6 +130,7 @@ export const DEFAULT_SETTINGS: Settings = {
   autoReconnect: true,
   logDir: '',
   checkUpdates: true,
+  defaultShell: '',
 };
 
 /** Remote machine stats (Linux only). Sizes are in bytes. */
@@ -213,3 +216,18 @@ export interface UpdateInfo {
   version?: string;
   url?: string;
 }
+
+/** A shell installed on this PC (PowerShell, cmd, Git Bash, a WSL distro, bash, zsh, …). */
+export interface LocalShell {
+  /** Stable id, e.g. 'powershell', 'cmd', 'wsl:Ubuntu', 'unix:/bin/zsh'. */
+  id: string;
+  name: string;
+  file: string;
+  args: string[];
+  kind: 'powershell' | 'cmd' | 'gitbash' | 'wsl' | 'unix';
+}
+
+/** Tabs for local shells use `local:<shell id>` where SSH tabs use the connection id. */
+export const LOCAL_PREFIX = 'local:';
+export const isLocalTarget = (id: string) => id.startsWith(LOCAL_PREFIX);
+export const localShellId = (target: string) => target.slice(LOCAL_PREFIX.length);

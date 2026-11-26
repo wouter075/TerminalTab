@@ -3,6 +3,8 @@ import type { ConnectionInfo, KeyInfo, SessionInfo, SessionStatus } from '../sha
 import { Icon } from './Icon';
 
 interface Props {
+  /** Name of the local shell, for a tab that runs on this PC. */
+  local?: string;
   connection?: ConnectionInfo;
   keyInfo?: KeyInfo;
   status: SessionStatus;
@@ -61,7 +63,7 @@ const STATUS_LABEL: Record<SessionStatus, string> = {
   error: 'Error',
 };
 
-export function StatusBar({ connection, keyInfo, status, message, info, cols, rows, statsEnabled }: Props) {
+export function StatusBar({ local, connection, keyInfo, status, message, info, cols, rows, statsEnabled }: Props) {
   // Re-render every second for the connected-time counter.
   const [now, setNow] = useState(Date.now());
   useEffect(() => {
@@ -88,18 +90,23 @@ export function StatusBar({ connection, keyInfo, status, message, info, cols, ro
     <div className="statusbar">
       <Item title={message ?? STATUS_LABEL[status]} className="sb-status">
         <span className={`status-dot ${status}`} />
-        {status !== 'connected' && STATUS_LABEL[status]}
+        {status !== 'connected' && (local && status === 'closed' ? 'Exited' : STATUS_LABEL[status])}
       </Item>
-      {connection && (
+      {local && (
+        <Item title="Shell on this PC" className="sb-host">
+          <Icon name="prompt" /> {local} · this PC
+        </Item>
+      )}
+      {!local && connection && (
         <Item title={`${connection.username}@${connection.host}:${connection.port}`} className="sb-host">
           {connection.username}@{connection.host}
           {connection.port !== 22 ? `:${connection.port}` : ''}
         </Item>
       )}
-      {connection && <Item title={keyInfo?.fingerprint ?? 'Authentication'}>{auth}</Item>}
+      {!local && connection && <Item title={keyInfo?.fingerprint ?? 'Authentication'}>{auth}</Item>}
 
       {live && (
-        <Item title={`Connected since ${new Date(live.connectedAt).toLocaleTimeString()}`}>
+        <Item title={`${local ? 'Started' : 'Connected since'} ${new Date(live.connectedAt).toLocaleTimeString()}`}>
           <Icon name="clock" /> {fmtDuration((now - live.connectedAt) / 1000)}
         </Item>
       )}
@@ -114,7 +121,7 @@ export function StatusBar({ connection, keyInfo, status, message, info, cols, ro
 
       <span className="sb-spacer" />
 
-      {live && statsEnabled && srv === undefined && <Item className="muted">Reading server stats…</Item>}
+      {live && !local && statsEnabled && srv === undefined && <Item className="muted">Reading server stats…</Item>}
       {srv && (
         <span className="sb-server">
           {srv.os && (
@@ -153,7 +160,7 @@ export function StatusBar({ connection, keyInfo, status, message, info, cols, ro
         </Item>
       )}
       {live && (
-        <Item title="Data sent / received in this session">
+        <Item title={local ? 'Typed / output in this session' : 'Data sent / received in this session'}>
           ↑ {fmtBytes(live.bytesOut)} ↓ {fmtBytes(live.bytesIn)}
         </Item>
       )}

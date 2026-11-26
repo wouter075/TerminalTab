@@ -1,5 +1,5 @@
 import { forwardRef, useEffect, useMemo, useState } from 'react';
-import type { ConnectionInfo, SyncStatus, UpdateInfo } from '../shared/types';
+import { LOCAL_PREFIX, type ConnectionInfo, type LocalShell, type SyncStatus, type UpdateInfo } from '../shared/types';
 import { ContextMenu } from './ContextMenu';
 import { Icon } from './Icon';
 import { Logo } from './Logo';
@@ -8,8 +8,10 @@ import { api } from './util';
 
 interface Props {
   connections: ConnectionInfo[];
+  shells: LocalShell[];
   openCounts: Map<string, number>;
   onConnect(id: string): void;
+  onOpenShell(id: string): void;
   onEdit(c: ConnectionInfo): void;
   onAdd(): void;
   onImport(): void;
@@ -21,12 +23,32 @@ interface Props {
   update: UpdateInfo;
 }
 
+const SHELLS_OPEN_KEY = 'terminaltab.shellsOpen';
+function loadShellsOpen(): boolean {
+  try {
+    return localStorage.getItem(SHELLS_OPEN_KEY) !== '0';
+  } catch {
+    return true;
+  }
+}
+
 export const Sidebar = forwardRef<HTMLInputElement, Props>(function Sidebar(
-  { connections, openCounts, onConnect, onEdit, onAdd, onImport, onKeys, onSnippets, onSettings, onLock, syncStatus, update },
+  { connections, shells, openCounts, onConnect, onOpenShell, onEdit, onAdd, onImport, onKeys, onSnippets, onSettings, onLock, syncStatus, update },
   searchRef,
 ) {
   const [query, setQuery] = useState('');
   const [addMenu, setAddMenu] = useState<{ x: number; y: number } | null>(null);
+  const [shellsOpen, setShellsOpen] = useState(loadShellsOpen);
+  const toggleShells = () => {
+    setShellsOpen(!shellsOpen);
+    try {
+      localStorage.setItem(SHELLS_OPEN_KEY, shellsOpen ? '0' : '1');
+    } catch {
+      /* private mode */
+    }
+  };
+  const q = query.trim().toLowerCase();
+  const visibleShells = shells.filter((s) => !q || s.name.toLowerCase().includes(q));
   // Keep "Synced 3 min ago" fresh.
   const [, setTick] = useState(0);
   useEffect(() => {
@@ -72,6 +94,8 @@ export const Sidebar = forwardRef<HTMLInputElement, Props>(function Sidebar(
           items={[
             { label: 'Add server…', action: onAdd },
             { label: 'Import from SSH config / PuTTY…', action: onImport },
+            ...(shells.length ? [{ separator: true as const }] : []),
+            ...shells.map((s) => ({ label: `Open ${s.name}`, action: () => onOpenShell(s.id) })),
           ]}
         />
       )}
@@ -82,17 +106,54 @@ export const Sidebar = forwardRef<HTMLInputElement, Props>(function Sidebar(
         value={query}
         onChange={(e) => setQuery(e.target.value)}
         onKeyDown={(e) => {
-          if (e.key === 'Enter' && first) {
-            onConnect(first.id);
+          if (e.key === 'Enter' && (first || (q && visibleShells[0]))) {
+            if (first) onConnect(first.id);
+            else onOpenShell(visibleShells[0].id);
             setQuery('');
           }
           if (e.key === 'Escape') setQuery('');
         }}
       />
       <div className="conn-list">
+        {visibleShells.length > 0 && (
+          <div>
+            <button className="group-label group-toggle" onClick={toggleShells} aria-expanded={shellsOpen || !!q}>
+              <span className={`chevron ${shellsOpen || q ? 'open' : ''}`}>›</span> This PC
+            </button>
+            {(shellsOpen || !!q) &&
+              visibleShells.map((s) => {
+                const n = openCounts.get(LOCAL_PREFIX + s.id);
+                return (
+                  <div
+                    key={s.id}
+                    className="conn shell"
+                    role="button"
+                    tabIndex={0}
+                    title={`${s.file} ${s.args.join(' ')}\nClick to open a new tab`}
+                    onClick={() => onOpenShell(s.id)}
+                    onKeyDown={(e) => e.key === 'Enter' && onOpenShell(s.id)}
+                  >
+                    <span className="conn-icon">
+                      <Icon name="prompt" />
+                    </span>
+                    <span className="conn-text">
+                      <span className="conn-name">{s.name}</span>
+                    </span>
+                    {!!n && (
+                      <span className="badge" title={`${n} open tab${n === 1 ? '' : 's'}`}>
+                        {n}
+                      </span>
+                    )}
+                  </div>
+                );
+              })}
+          </div>
+        )}
         {groups.map(([group, items]) => (
           <div key={group || '__none'}>
-            {(group || groups.length > 1) && <div className="group-label">{group || 'Ungrouped'}</div>}
+            {(group || groups.length > 1 || visibleShells.length > 0) && (
+              <div className="group-label">{group || (groups.length > 1 ? 'Ungrouped' : 'Servers')}</div>
+            )}
             {items.map((c) => (
               <div
                 key={c.id}

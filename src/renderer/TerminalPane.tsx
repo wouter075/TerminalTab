@@ -3,7 +3,7 @@ import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { SearchAddon, type ISearchOptions } from '@xterm/addon-search';
 import { WebLinksAddon } from '@xterm/addon-web-links';
-import type { EndReason, SessionInfo, SessionStatus } from '../shared/types';
+import { isLocalTarget, localShellId, type EndReason, type SessionInfo, type SessionStatus } from '../shared/types';
 import { ContextMenu, type MenuItem } from './ContextMenu';
 import { Icon } from './Icon';
 import { panes } from './panes';
@@ -13,6 +13,7 @@ import { api, errMsg } from './util';
 
 interface Props {
   tabId: string;
+  /** Connection id, or `local:<shell id>` for a shell on this PC. */
   connectionId: string;
   /** Bumping this re-opens the session in the same terminal (reconnect). */
   attempt: number;
@@ -21,7 +22,7 @@ interface Props {
   fontFamily: string;
   theme: string;
   onStatus(status: SessionStatus, message?: string, reason?: EndReason): void;
-  /** Current SSH session id (null while disconnected). */
+  /** Current session id (null while disconnected). */
   onSession(sessionId: string | null): void;
   onInfo(info: SessionInfo): void;
   onSize(cols: number, rows: number): void;
@@ -34,7 +35,7 @@ interface Props {
 /** Keys the terminal must not swallow, so the app's shortcuts keep working. */
 function isAppShortcut(e: KeyboardEvent): boolean {
   if (!e.ctrlKey) return false;
-  if (e.code === 'KeyT' || e.code === 'KeyW' || e.code === 'Tab') return true;
+  if (e.code === 'KeyT' || e.code === 'KeyW' || e.code === 'Tab') return true; // incl. Ctrl+Shift+T
   return e.shiftKey && (e.code === 'KeyP' || e.code === 'KeyE');
 }
 
@@ -157,17 +158,20 @@ export function TerminalPane(props: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Open (or re-open) the SSH session.
+  // Open (or re-open) the SSH session or local shell.
   useEffect(() => {
     const term = termRef.current!;
     let cancelled = false;
     let unsubscribe: (() => void) | null = null;
     let sid: string | null = null;
+    const local = isLocalTarget(connectionId);
     fitRef.current?.fit();
-    if (attempt > 0) term.write('\r\n\x1b[90m--- reconnecting ---\x1b[0m\r\n');
+    if (attempt > 0) term.write(`\r\n\x1b[90m--- ${local ? 'restarting' : 'reconnecting'} ---\x1b[0m\r\n`);
 
-    api
-      .openSession(connectionId, term.cols, term.rows)
+    (local
+      ? api.openLocal(localShellId(connectionId), term.cols, term.rows)
+      : api.openSession(connectionId, term.cols, term.rows)
+    )
       .then((id) => {
         sid = id;
         if (cancelled) {
@@ -192,7 +196,7 @@ export function TerminalPane(props: Props) {
         });
       })
       .catch((err) => {
-        cb.current.onStatus('error', errMsg(err), 'lost');
+        cb.current.onStatus('error', errMsg(err), local ? 'exit' : 'lost');
         term.write(`\r\n\x1b[31m✖ ${errMsg(err)}\x1b[0m\r\n`);
       });
 
@@ -276,6 +280,7 @@ export function TerminalPane(props: Props) {
 
   // ---- context menu --------------------------------------------------------
   const term = termRef.current;
+  const isLocal = isLocalTarget(connectionId);
   const menuItems: MenuItem[] = term
     ? [
         {
@@ -294,7 +299,7 @@ export function TerminalPane(props: Props) {
         { label: 'Find…', shortcut: 'Ctrl+F', action: openFind },
         { separator: true },
         { label: 'Snippets…', shortcut: 'Ctrl+Shift+P', disabled: !sessionRef.current, action: () => props.onSnippets() },
-        { label: 'Files (SFTP)', shortcut: 'Ctrl+Shift+E', action: () => props.onToggleFiles() },
+        ...(isLocal ? [] : [{ label: 'Files (SFTP)', shortcut: 'Ctrl+Shift+E', action: () => props.onToggleFiles() }]),
         { separator: true },
         { label: 'Clear screen', action: () => term.clear() },
         { label: 'Duplicate tab', action: () => props.onDuplicate() },

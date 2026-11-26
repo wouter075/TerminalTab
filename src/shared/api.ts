@@ -5,6 +5,7 @@ import type {
   ImportCandidate,
   EndReason,
   KeyInfo,
+  LocalShell,
   RemoteEntry,
   SessionInfo,
   Snippet,
@@ -81,6 +82,10 @@ export interface TerminalTabApi {
   /** Receive live SessionInfo for this session (the visible tab); null stops. */
   watchSession(sessionId: string | null): void;
   answerHostKey(requestId: string, trust: boolean): void;
+  /** Shells installed on this PC; `fresh` detects them again. */
+  localShells(fresh?: boolean): Promise<LocalShell[]>;
+  /** Start a local shell; uses the same write/resize/close/events as SSH sessions. */
+  openLocal(shellId: string, cols: number, rows: number): Promise<string>;
 
   sftpList(sessionId: string, dir: string): Promise<{ path: string; entries: RemoteEntry[] }>;
   sftpMkdir(sessionId: string, path: string): Promise<void>;

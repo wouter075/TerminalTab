@@ -3,7 +3,8 @@
 # TerminalTab
 
 A Windows and Linux app for keeping many SSH sessions open side by side as tabs,
-with your servers and `.pem` keys saved in an encrypted vault.
+with your servers and `.pem` keys saved in an encrypted vault. Local shells
+(PowerShell, Command Prompt, Git Bash, WSL, bash, zsh, …) open as tabs too.
 
 ## Download
 
@@ -64,6 +65,11 @@ Good to know:
 ## Features
 
 - SSH sessions as tabs (xterm.js + ssh2, no OpenSSH install needed)
+- **Local shells** as tabs, found automatically: Windows PowerShell, PowerShell 7,
+  Command Prompt, Git Bash and every WSL distro (Ubuntu, Debian, …) on Windows; the
+  shells in `/etc/shells` (bash, zsh, fish, …) on Linux. Open them from *This PC* in
+  the sidebar, the **+** next to the tabs, the palette or Ctrl+Shift+T (default shell
+  in Settings). Find, snippets, colour schemes and session logs work there too
 - Saved servers with groups, colors and search (Ctrl+T, Enter to connect)
 - **Import** servers and their keys from `~/.ssh/config` (Host blocks, `Host *`
   defaults, `Include`) and from saved PuTTY sessions on Windows
@@ -98,7 +104,8 @@ Good to know:
 | Keys | Action |
 | --- | --- |
 | Ctrl+T | Search servers (Enter opens the first match) |
-| Ctrl+Shift+P | Palette: insert a snippet or open a server |
+| Ctrl+Shift+T | New tab with your default local shell |
+| Ctrl+Shift+P | Palette: insert a snippet, open a server or a local shell |
 | Ctrl+Shift+E | Show / hide the Files (SFTP) panel |
 | Ctrl+F | Find in the terminal (Enter / Shift+Enter: next / previous) |
 | Ctrl+Shift+C / Ctrl+Shift+V | Copy / paste (selecting text also copies) |
@@ -117,6 +124,11 @@ npm run make       # Windows: out/make/squirrel.windows/x64/TerminalTab-Setup.ex
                    #          (needs dpkg, fakeroot and rpmbuild)
 ```
 
+Local shells use [node-pty](https://github.com/microsoft/node-pty), a native module.
+Windows uses its prebuilt binaries; on Linux `npm install` compiles it, so a C++
+toolchain is needed (`build-essential` and `python3` on Ubuntu). The packaged app
+ships it next to `app.asar` in `resources/node-pty` (see `forge.config.mts`).
+
 Releases are built by GitHub Actions (`.github/workflows/release.yml`): bump
 `version` in `package.json`, commit, then push a matching tag, e.g.
 `git tag v1.0.1 && git push origin v1.0.1`.
@@ -133,6 +145,7 @@ password means the vault cannot be decrypted. Delete the file to start over.
 | `src/main/vault.ts` | Encrypted vault (file format, unlock, save) |
 | `src/main/sessions.ts` | SSH connections (one ssh2 client per tab), latency + traffic counters |
 | `src/main/serverStats.ts` | Read-only stats script and its parser |
+| `src/main/localShells.ts` | Local shells: detection (PowerShell, cmd, Git Bash, WSL, `/etc/shells`) and running them in a pseudo-terminal (node-pty) |
 | `src/main/sftp.ts` | SFTP over the tab's connection: list, transfers with progress, rename, delete |
 | `src/main/importers.ts`, `importScan.ts` | `~/.ssh/config` and PuTTY import |
 | `src/main/sessionLog.ts` | Plain-text session logs |
