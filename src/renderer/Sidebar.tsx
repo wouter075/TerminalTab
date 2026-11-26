@@ -209,6 +209,11 @@ export const Sidebar = forwardRef<HTMLInputElement, Props>(function Sidebar(
           <Icon name="download" /> {update.version ? `Version ${update.version}` : 'Update'} ready — restart
         </button>
       )}
+      {update.state === 'downloading' && (
+        <div className="update-line muted" title="It installs when you restart TerminalTab">
+          <Icon name="download" /> Downloading update…
+        </div>
+      )}
       {update.state === 'available' && (
         <button className="update-line" onClick={() => window.open(update.url)} title={update.url}>
           <Icon name="download" /> Version {update.version} available — download

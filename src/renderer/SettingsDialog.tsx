@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import type { LocalShell, Settings, SyncStatus } from '../shared/types';
+import type { LocalShell, Settings, SyncStatus, UpdateCheck } from '../shared/types';
 import { Modal } from './Modal';
 import { FONT_SUGGESTIONS, THEMES } from './themes';
 import { SyncSection } from './SyncSection';
@@ -25,6 +25,15 @@ export function SettingsDialog({ settings, syncRepo, syncStatus, onClose, onChan
   const [defaultShell, setDefaultShell] = useState(settings.defaultShell);
   const [shells, setShells] = useState<LocalShell[]>([]);
   const [scanning, setScanning] = useState(false);
+  const [updateCheck, setUpdateCheck] = useState<UpdateCheck | 'checking' | null>(null);
+  const checkNow = async () => {
+    setUpdateCheck('checking');
+    try {
+      setUpdateCheck(await api.checkForUpdates());
+    } catch (err) {
+      setUpdateCheck({ result: 'error', message: errMsg(err) });
+    }
+  };
   useEffect(() => {
     api.localShells().then(setShells, () => undefined);
   }, []);
@@ -224,6 +233,35 @@ export function SettingsDialog({ settings, syncRepo, syncStatus, onClose, onChan
             </span>
           </span>
         </label>
+        <div className="row update-check">
+          <button type="button" onClick={checkNow} disabled={updateCheck === 'checking'}>
+            {updateCheck === 'checking' ? 'Checking…' : 'Check now'}
+          </button>
+          {updateCheck && updateCheck !== 'checking' && (
+            <span className={`small ${updateCheck.result === 'error' ? 'error' : updateCheck.result === 'latest' ? 'muted' : 'ok'}`}>
+              {updateCheck.result === 'latest' && `You have the latest version (${APP_VERSION}).`}
+              {updateCheck.result === 'downloading' &&
+                'A new version is downloading. "Restart" appears at the bottom of the sidebar when it is ready.'}
+              {updateCheck.result === 'downloaded' && (
+                <>
+                  Version {updateCheck.version ?? ''} is ready.{' '}
+                  <button type="button" className="link-btn" onClick={() => api.restartToUpdate()}>
+                    Restart now
+                  </button>
+                </>
+              )}
+              {updateCheck.result === 'available' && (
+                <>
+                  Version {updateCheck.version} is available.{' '}
+                  <button type="button" className="link-btn" onClick={() => window.open(updateCheck.url)}>
+                    Download
+                  </button>
+                </>
+              )}
+              {updateCheck.result === 'error' && updateCheck.message}
+            </span>
+          )}
+        </div>
 
         <h3>Change master password</h3>
         <input type="password" placeholder="Current password" value={oldPw} onChange={(e) => setOldPw(e.target.value)} />

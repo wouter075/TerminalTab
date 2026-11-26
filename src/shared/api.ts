@@ -3,6 +3,7 @@ import type {
   ConnectionInput,
   HostKeyPrompt,
   ImportCandidate,
+  UpdateCheck,
   EndReason,
   KeyInfo,
   LocalShell,
@@ -104,6 +105,8 @@ export interface TerminalTabApi {
 
   updateStatus(): Promise<UpdateInfo>;
   restartToUpdate(): Promise<void>;
+  /** Check for a new version right now (also when automatic checks are off). */
+  checkForUpdates(): Promise<UpdateCheck>;
 
   onSessionData(cb: (sessionId: string, data: Uint8Array) => void): () => void;
   onSessionStatus(

@@ -212,7 +212,8 @@ export interface ImportCandidate {
 }
 
 export interface UpdateInfo {
-  state: 'none' | 'available' | 'downloaded';
+  /** 'downloading': Windows found a new version and is fetching it. */
+  state: 'none' | 'available' | 'downloading' | 'downloaded';
   version?: string;
   url?: string;
 }
@@ -231,3 +232,11 @@ export interface LocalShell {
 export const LOCAL_PREFIX = 'local:';
 export const isLocalTarget = (id: string) => id.startsWith(LOCAL_PREFIX);
 export const localShellId = (target: string) => target.slice(LOCAL_PREFIX.length);
+
+/** Outcome of "Check now" in Settings. */
+export interface UpdateCheck {
+  result: 'latest' | 'available' | 'downloading' | 'downloaded' | 'error';
+  version?: string;
+  url?: string;
+  message?: string;
+}

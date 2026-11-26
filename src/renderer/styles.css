@@ -1211,3 +1211,12 @@ textarea {
   margin: 0 4px;
   flex-shrink: 0;
 }
+
+.update-check {
+  align-items: center;
+  gap: 10px;
+  margin-top: 6px;
+}
+.update-check .link-btn {
+  padding: 0;
+}

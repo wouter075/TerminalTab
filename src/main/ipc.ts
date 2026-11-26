@@ -339,6 +339,7 @@ export function registerIpc(vaultFile: string, getWindow: () => BrowserWindow | 
 
   handle('update:get', () => updater.current, false);
   handle('update:restart', () => updater.restart(), false);
+  handle('update:check', () => updater.checkNow(), false);
 
   // ---- sync ------------------------------------------------------------
   handle('sync:status', () => sync.getStatus());

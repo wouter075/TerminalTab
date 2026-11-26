@@ -56,6 +56,7 @@ const api: TerminalTabApi = {
 
   updateStatus: () => ipcRenderer.invoke('update:get'),
   restartToUpdate: () => ipcRenderer.invoke('update:restart'),
+  checkForUpdates: () => ipcRenderer.invoke('update:check'),
 
   onSessionData: (cb) => listen('session:data', cb),
   onSessionStatus: (cb) => listen('session:status', cb),
