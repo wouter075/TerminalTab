@@ -1,7 +1,7 @@
 {
   "name": "terminaltab",
   "productName": "TerminalTab",
-  "version": "1.3.2",
+  "version": "1.3.3",
   "private": true,
   "description": "Tabbed SSH terminal manager with an encrypted key vault",
   "keywords": [],
@@ -54,5 +54,14 @@
     "react": "^19.3.1",
     "react-dom": "^19.3.1",
     "ssh2": "^1.17.0"
+  },
+  "allowScripts": {
+    "electron-winstaller": true,
+    "node-pty": true,
+    "cpu-features": false,
+    "ssh2": false
+  },
+  "overrides": {
+    "cross-zip": "^4.1.0"
   }
 }
