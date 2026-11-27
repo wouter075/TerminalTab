@@ -159,7 +159,7 @@ describe('SftpManager', () => {
     expect((await sftp.list(sid, '/home/alice')).entries).toEqual([]);
     await expect(sftp.list(sid, '/nope')).rejects.toThrow(/not found/);
     sessions.closeAll();
-  });
+  }, 30_000); // ssh2 without its optional native crypto add-on (like the packaged app) is slower
 
   it('uploads and downloads files and folders with progress', async () => {
     reset();
@@ -186,7 +186,7 @@ describe('SftpManager', () => {
       sessions.closeAll();
       await fs.promises.rm(tmp, { recursive: true, force: true });
     }
-  });
+  }, 30_000); // ssh2 without its optional native crypto add-on (like the packaged app) is slower
 
   it('fails cleanly when the session is gone', async () => {
     const sftp = new SftpManager(() => undefined, () => undefined);

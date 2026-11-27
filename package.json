@@ -1,7 +1,7 @@
 {
   "name": "terminaltab",
   "productName": "TerminalTab",
-  "version": "1.3.3",
+  "version": "1.3.4",
   "private": true,
   "description": "Tabbed SSH terminal manager with an encrypted key vault",
   "keywords": [],
